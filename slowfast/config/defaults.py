@@ -172,7 +172,9 @@ _C.MODEL.ARCH = "slowfast"
 _C.MODEL.MODEL_NAME = "SlowFast"
 
 # The number of classes to predict for the model.
-_C.MODEL.NUM_CLASSES = [400, ]
+_C.MODEL.NUM_CLASSES = [
+    400,
+]
 
 # Loss function.
 _C.MODEL.LOSS_FUNC = "cross_entropy"
@@ -188,6 +190,14 @@ _C.MODEL.DROPOUT_RATE = 0.5
 
 # The std to initialize the fc layer(s).
 _C.MODEL.FC_INIT_STD = 0.01
+
+
+# -----------------------------------------------------------------------------
+# WandB options
+# -----------------------------------------------------------------------------
+_C.WANDB = CfgNode()
+
+_C.WANDB.ENABLE = False
 
 
 # -----------------------------------------------------------------------------
@@ -370,14 +380,10 @@ _C.AVA = CfgNode()
 _C.AVA.FRAME_DIR = "/mnt/fair-flash3-east/ava_trainval_frames.img/"
 
 # Directory path for files of frame lists.
-_C.AVA.FRAME_LIST_DIR = (
-    "/mnt/vol/gfsai-flash3-east/ai-group/users/haoqifan/ava/frame_list/"
-)
+_C.AVA.FRAME_LIST_DIR = "/mnt/vol/gfsai-flash3-east/ai-group/users/haoqifan/ava/frame_list/"
 
 # Directory path for annotation files.
-_C.AVA.ANNOTATION_DIR = (
-    "/mnt/vol/gfsai-flash3-east/ai-group/users/haoqifan/ava/frame_list/"
-)
+_C.AVA.ANNOTATION_DIR = "/mnt/vol/gfsai-flash3-east/ai-group/users/haoqifan/ava/frame_list/"
 
 # Filenames of training samples list files.
 _C.AVA.TRAIN_LISTS = ["train.csv"]

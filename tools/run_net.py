@@ -5,13 +5,18 @@
 
 import argparse
 import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+from loguru import logger
 import torch
 import slowfast.utils.checkpoint as cu
 import slowfast.utils.multiprocessing as mpu
 from slowfast.config.defaults import get_cfg
 
-from test_net import test
-from train_net import train
+from tools.test_net import test
+from tools.train_net import train
 
 
 def parse_args():
@@ -28,10 +33,8 @@ def parse_args():
         cfg (str): path to the config file.
         opts (argument): provide addtional options from the command line, it
             overwrites the config loaded from file.
-        """
-    parser = argparse.ArgumentParser(
-        description="Provide SlowFast video training and testing pipeline."
-    )
+    """
+    parser = argparse.ArgumentParser(description="Provide SlowFast video training and testing pipeline.")
     parser.add_argument(
         "--shard_id",
         help="The shard id of current node, Starts from 0 to num_shards - 1",
@@ -54,7 +57,7 @@ def parse_args():
         "--cfg",
         dest="cfg_file",
         help="Path to the config file",
-        default="configs/Kinetics/SLOWFAST_4x16_R50.yaml",
+        default="configs/EPIC-KITCHENS/SLOWFAST_8x8_R50.yaml",
         type=str,
     )
     parser.add_argument(
@@ -63,8 +66,6 @@ def parse_args():
         default=None,
         nargs=argparse.REMAINDER,
     )
-    if len(sys.argv) == 1:
-        parser.print_help()
     return parser.parse_args()
 
 
@@ -104,6 +105,16 @@ def main():
     """
     args = parse_args()
     cfg = load_config(args)
+
+    if not torch.cuda.is_available():
+        logger.warning("No GPU found. Running on CPU.")
+
+        # Modify config for debug training
+        cfg.NUM_GPUS = 0
+        cfg.WANDB.ENABLE = False
+        cfg.DATA_LOADER.NUM_WORKERS = 4
+        cfg.TRAIN.BATCH_SIZE = 2
+        cfg.TEST.BATCH_SIZE = 10
 
     # Perform training.
     if cfg.TRAIN.ENABLE:

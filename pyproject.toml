@@ -1,0 +1,12 @@
+[tool.poetry]
+name = "slowfast"
+version = "0.1.0"
+description = "Slow-Fast Auditory Streams for Audio Recognition"
+authors = ["Evangelos Kazakos", "Clément Sicard <clement.sicard@icloud.com>"]
+readme = "README.md"
+license = "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License."
+keywords = ["auditory", "slowfast", "audio", "recognition"]
+homepage = ""
+repository = ""
+documentation = ""
+include = ["pyproject.toml", "README.md", "LICENSE", "slowfast"]

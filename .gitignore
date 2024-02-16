@@ -183,3 +183,6 @@ runs/
 scores/
 results/
 notebooks/waveforms
+weights
+*.sifpath
+*.ext3

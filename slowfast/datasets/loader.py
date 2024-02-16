@@ -33,17 +33,12 @@ def detection_collate(batch):
         if key == "boxes" or key == "ori_boxes":
             # Append idx info to the bboxes before concatenating them.
             bboxes = [
-                np.concatenate(
-                    [np.full((data[i].shape[0], 1), float(i)), data[i]], axis=1
-                )
-                for i in range(len(data))
+                np.concatenate([np.full((data[i].shape[0], 1), float(i)), data[i]], axis=1) for i in range(len(data))
             ]
             bboxes = np.concatenate(bboxes, axis=0)
             collated_extra_data[key] = torch.tensor(bboxes).float()
         elif key == "metadata":
-            collated_extra_data[key] = torch.tensor(
-                list(itertools.chain(*data))
-            ).view(-1, 2)
+            collated_extra_data[key] = torch.tensor(list(itertools.chain(*data))).view(-1, 2)
         else:
             collated_extra_data[key] = default_collate(data)
 
@@ -62,17 +57,17 @@ def construct_loader(cfg, split):
     assert split in ["train", "val", "test", "train+val"]
     if split in ["train", "train+val"]:
         dataset_name = cfg.TRAIN.DATASET
-        batch_size = int(cfg.TRAIN.BATCH_SIZE / cfg.NUM_GPUS)
+        batch_size = int(cfg.TRAIN.BATCH_SIZE / cfg.NUM_GPUS) if cfg.NUM_GPUS > 0 else cfg.TRAIN.BATCH_SIZE
         shuffle = True
         drop_last = True
     elif split in ["val"]:
         dataset_name = cfg.TRAIN.DATASET
-        batch_size = int(cfg.TRAIN.BATCH_SIZE / cfg.NUM_GPUS)
+        batch_size = int(cfg.TRAIN.BATCH_SIZE / cfg.NUM_GPUS) if cfg.NUM_GPUS > 0 else cfg.TRAIN.BATCH_SIZE
         shuffle = False
         drop_last = False
     elif split in ["test"]:
         dataset_name = cfg.TEST.DATASET
-        batch_size = int(cfg.TEST.BATCH_SIZE / cfg.NUM_GPUS)
+        batch_size = int(cfg.TEST.BATCH_SIZE / cfg.NUM_GPUS) if cfg.NUM_GPUS > 0 else cfg.TEST.BATCH_SIZE
         shuffle = False
         drop_last = False
 
@@ -95,15 +90,15 @@ def construct_loader(cfg, split):
 
 
 def shuffle_dataset(loader, cur_epoch):
-    """"
+    """ "
     Shuffles the data.
     Args:
         loader (loader): data loader to perform shuffle.
         cur_epoch (int): number of the current epoch.
     """
-    assert isinstance(
-        loader.sampler, (RandomSampler, DistributedSampler)
-    ), "Sampler type '{}' not supported".format(type(loader.sampler))
+    assert isinstance(loader.sampler, (RandomSampler, DistributedSampler)), "Sampler type '{}' not supported".format(
+        type(loader.sampler)
+    )
     # RandomSampler handles shuffling automatically
     if isinstance(loader.sampler, DistributedSampler):
         # DistributedSampler shuffles data based on epoch

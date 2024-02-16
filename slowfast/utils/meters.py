@@ -21,7 +21,7 @@ from slowfast.utils.ava_eval_helper import (
     read_labelmap,
 )
 
-logger = logging.get_logger(__name__)
+from loguru import logger
 
 
 def get_ava_mini_groundtruth(full_groundtruth):
@@ -49,9 +49,9 @@ class AVAMeter(object):
 
     def __init__(self, overall_iters, cfg, mode):
         """
-            overall_iters (int): the overall number of iterations of one epoch.
-            cfg (CfgNode): configs.
-            mode (str): `train`, `val`, or `test` mode.
+        overall_iters (int): the overall number of iterations of one epoch.
+        cfg (CfgNode): configs.
+        mode (str): `train`, `val`, or `test` mode.
         """
         self.cfg = cfg
         self.lr = None
@@ -63,21 +63,15 @@ class AVAMeter(object):
         self.all_ori_boxes = []
         self.all_metadata = []
         self.overall_iters = overall_iters
-        self.excluded_keys = read_exclusions(
-            os.path.join(cfg.AVA.ANNOTATION_DIR, cfg.AVA.EXCLUSION_FILE)
-        )
+        self.excluded_keys = read_exclusions(os.path.join(cfg.AVA.ANNOTATION_DIR, cfg.AVA.EXCLUSION_FILE))
         self.categories, self.class_whitelist = read_labelmap(
             os.path.join(cfg.AVA.ANNOTATION_DIR, cfg.AVA.LABEL_MAP_FILE)
         )
-        gt_filename = os.path.join(
-            cfg.AVA.ANNOTATION_DIR, cfg.AVA.GROUNDTRUTH_FILE
-        )
+        gt_filename = os.path.join(cfg.AVA.ANNOTATION_DIR, cfg.AVA.GROUNDTRUTH_FILE)
         self.full_groundtruth = read_csv(gt_filename, self.class_whitelist)
         self.mini_groundtruth = get_ava_mini_groundtruth(self.full_groundtruth)
 
-        _, self.video_idx_to_name = ava_helper.load_image_lists(
-            cfg, mode == "train"
-        )
+        _, self.video_idx_to_name = ava_helper.load_image_lists(cfg, mode == "train")
 
     def log_iter_stats(self, cur_epoch, cur_iter):
         """
@@ -297,19 +291,11 @@ class TestMeter(object):
             ks = (1, 5) correspods to top-1 and top-5 accuracy.
         """
         if not all(self.clip_count == self.num_clips):
-            logger.warning(
-                "clip count {} ~= num clips {}".format(
-                    self.clip_count, self.num_clips
-                )
-            )
+            logger.warning("clip count {} ~= num clips {}".format(self.clip_count, self.num_clips))
             logger.warning(self.clip_count)
 
-        num_topks_correct = metrics.topks_correct(
-            self.video_preds, self.video_labels, ks
-        )
-        topks = [
-            (x / self.video_preds.size(0)) * 100.0 for x in num_topks_correct
-        ]
+        num_topks_correct = metrics.topks_correct(self.video_preds, self.video_labels, ks)
+        topks = [(x / self.video_preds.size(0)) * 100.0 for x in num_topks_correct]
         assert len({len(ks), len(topks)}) == 1
         stats = {"split": "test_final"}
         for k, topk in zip(ks, topks):
@@ -449,9 +435,7 @@ class TrainMeter(object):
         """
         if (cur_iter + 1) % self._cfg.LOG_PERIOD != 0:
             return
-        eta_sec = self.iter_timer.seconds() * (
-            self.MAX_EPOCH - (cur_epoch * self.epoch_iters + cur_iter + 1)
-        )
+        eta_sec = self.iter_timer.seconds() * (self.MAX_EPOCH - (cur_epoch * self.epoch_iters + cur_iter + 1))
         eta = str(datetime.timedelta(seconds=int(eta_sec)))
         mem_usage = misc.gpu_mem_usage()
         stats = {
@@ -474,9 +458,7 @@ class TrainMeter(object):
         Args:
             cur_epoch (int): the number of current epoch.
         """
-        eta_sec = self.iter_timer.seconds() * (
-            self.MAX_EPOCH - (cur_epoch + 1) * self.epoch_iters
-        )
+        eta_sec = self.iter_timer.seconds() * (self.MAX_EPOCH - (cur_epoch + 1) * self.epoch_iters)
         eta = str(datetime.timedelta(seconds=int(eta_sec)))
         mem_usage = misc.gpu_mem_usage()
         top1_err = self.num_top1_mis / self.num_samples
@@ -726,9 +708,7 @@ class EPICTrainMeter(object):
         """
         if (cur_iter + 1) % self._cfg.LOG_PERIOD != 0:
             return
-        eta_sec = self.iter_timer.seconds() * (
-            self.MAX_EPOCH - (cur_epoch * self.epoch_iters + cur_iter + 1)
-        )
+        eta_sec = self.iter_timer.seconds() * (self.MAX_EPOCH - (cur_epoch * self.epoch_iters + cur_iter + 1))
         eta = str(datetime.timedelta(seconds=int(eta_sec)))
         mem_usage = misc.gpu_mem_usage()
         stats = {
@@ -757,9 +737,7 @@ class EPICTrainMeter(object):
         Args:
             cur_epoch (int): the number of current epoch.
         """
-        eta_sec = self.iter_timer.seconds() * (
-            self.MAX_EPOCH - (cur_epoch + 1) * self.epoch_iters
-        )
+        eta_sec = self.iter_timer.seconds() * (self.MAX_EPOCH - (cur_epoch + 1) * self.epoch_iters)
         eta = str(datetime.timedelta(seconds=int(eta_sec)))
         mem_usage = misc.gpu_mem_usage()
         verb_top1_acc = self.num_verb_top1_cor / self.num_samples
@@ -983,6 +961,7 @@ class EPICTestMeter(object):
         self.noun_video_labels = torch.zeros((num_videos)).long()
         self.metadata = np.zeros(num_videos, dtype=object)
         self.clip_count = torch.zeros((num_videos)).long()
+
         # Reset metric.
         self.reset()
 
@@ -1016,7 +995,7 @@ class EPICTestMeter(object):
             self.verb_video_preds[vid_id] += preds[0][ind]
             self.noun_video_labels[vid_id] = labels[1][ind]
             self.noun_video_preds[vid_id] += preds[1][ind]
-            self.metadata[vid_id] = metadata['narration_id'][ind]
+            self.metadata[vid_id] = metadata["narration_id"][ind]
             self.clip_count[vid_id] += 1
 
     def log_iter_stats(self, cur_iter):
@@ -1048,11 +1027,7 @@ class EPICTestMeter(object):
             ks = (1, 5) correspods to top-1 and top-5 accuracy.
         """
         if not all(self.clip_count == self.num_clips):
-            logger.warning(
-                "clip count {} ~= num clips {}".format(
-                    self.clip_count, self.num_clips
-                )
-            )
+            logger.warning("clip count {} ~= num clips {}".format(self.clip_count, self.num_clips))
             logger.warning(self.clip_count)
 
         verb_topks = metrics.topk_accuracies(self.verb_video_preds, self.verb_video_labels, ks)
@@ -1066,6 +1041,8 @@ class EPICTestMeter(object):
         for k, noun_topk in zip(ks, noun_topks):
             stats["noun_top{}_acc".format(k)] = "{:.{prec}f}".format(noun_topk, prec=2)
         logging.log_json_stats(stats)
-        return (self.verb_video_preds.numpy().copy(), self.noun_video_preds.numpy().copy()), \
-               (self.verb_video_labels.numpy().copy(), self.noun_video_labels.numpy().copy()), \
-               self.metadata.copy()
+        return (
+            (self.verb_video_preds.numpy().copy(), self.noun_video_preds.numpy().copy()),
+            (self.verb_video_labels.numpy().copy(), self.noun_video_labels.numpy().copy()),
+            self.metadata.copy(),
+        )

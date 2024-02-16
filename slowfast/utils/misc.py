@@ -103,9 +103,7 @@ def log_model_info(model, cfg, is_train=True):
     logger.info("Model:\n{}".format(model))
     logger.info("Params: {:,}".format(params_count(model)))
     logger.info("Mem: {:,} MB".format(gpu_mem_usage()))
-    logger.info(
-        "FLOPs: {:,} GFLOPs".format(get_flop_stats(model, cfg, is_train))
-    )
+    # logger.info("FLOPs: {:,} GFLOPs".format(get_flop_stats(model, cfg, is_train)))
     logger.info("nvidia-smi")
     os.system("nvidia-smi")
 
@@ -118,9 +116,7 @@ def is_eval_epoch(cfg, cur_epoch):
             slowfast/config/defaults.py
         cur_epoch (int): current epoch.
     """
-    return (
-        cur_epoch + 1
-    ) % cfg.TRAIN.EVAL_PERIOD == 0 or cur_epoch + 1 == cfg.SOLVER.MAX_EPOCH
+    return (cur_epoch + 1) % cfg.TRAIN.EVAL_PERIOD == 0 or cur_epoch + 1 == cfg.SOLVER.MAX_EPOCH
 
 
 def plot_input(tensor, bboxes=(), texts=(), path="./tmp_vis.png"):

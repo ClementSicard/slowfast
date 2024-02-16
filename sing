@@ -1,0 +1,45 @@
+# build bash command arguments
+
+# allow commands from stdin (e.g. ./sing <<< "echo hi")
+readstdin() {
+	read -N1 -t0.5 __ && { (($? <= 128)) && {
+		IFS= read -rd '' _stdin
+		echo "$__$_stdin"
+	}; }
+}
+
+# build args
+CMD="$(readstdin)"
+ARGS=()
+if [[ -z "$CMD" ]]; then
+	if [[ -z "$SINGUCONDA_NO_INIT_ENV" ]]; then
+		ARGS+=(--init-file /ext3/env)
+	fi
+else
+	if [[ -z "$SINGUCONDA_NO_INIT_ENV" ]]; then
+		CMD="[[ -e /ext3/env ]] && . /ext3/env;$CMD"
+	fi
+	ARGS+=(-c "$CMD")
+fi
+
+# build singularity arguments
+
+# check for GPUs
+GPUS=$(type -p nvidia-smi >&/dev/null && nvidia-smi --query-gpu=name --format=csv,noheader)
+NV=$([[ $(echo -n "$GPUS" | grep -v "No devices were found" | awk 'NF' | wc -l) -ge 1 ]] && echo '--nv')
+# report GPUs
+if [[ -z "$QUIET_SING" ]]; then
+	[[ ! -z "$NV" ]] && echo "Detected gpus, using --nv:" && echo $GPUS && echo
+	[[ ! -z "$NV" ]] || echo "No gpus detected. Use --nv for gpu bindings." && echo
+fi
+
+# get singularity arguments
+SCRIPT_DIR="$(dirname ${BASH_SOURCE:-$0})"
+SING_NAME="${SING_NAME:-slowfast-50g}"
+
+OVERLAY="$SCRIPT_DIR/$SING_NAME.ext3"
+SIF="$(cat $SCRIPT_DIR/.$SING_NAME.sifpath)"
+
+# run singularity
+
+singularity exec $NV $@ --overlay "${OVERLAY}:ro" --overlay "/scratch/work/ptg/EPIC-KITCHENS/rgb_frames.sqf" "$SIF" /bin/bash "${ARGS[@]}"

@@ -8,13 +8,12 @@ import pandas as pd
 import torch
 import yaml
 from loguru import logger
-from audio_slowfast.models.build import build_model
+from slowfast.models.build import build_model
 
 import src.utils
-from audio_slowfast import test, train
-from audio_slowfast.config.defaults import get_cfg
-from audio_slowfast.utils.discretize import discretize
-from audio_slowfast.utils.misc import launch_job
+from slowfast import test, train
+from slowfast.config.defaults import get_cfg
+from slowfast.utils.misc import launch_job
 from src.dataset import prepare_dataset
 from src.pddl import Predicate
 import socket
@@ -132,43 +131,6 @@ def main(args: Dict[str, Any]) -> None:
 
     elif args["test"]:
         launch_job(cfg=cfg, init_method=None, func=test)
-
-
-def example(
-    model: torch.nn.Module,
-    attributes: List[str],
-    file_path: str,
-    device: str = "cuda",
-) -> None:
-    logger.warning(model)
-    model.eval()
-    vocab_verb, vocab_noun = model.vocab
-
-    logger.info(f"Loading input audio from {args['example']}")
-
-    y, sr = librosa.load(file_path, sr=24_000)
-    spec = model.prepare_audio(y, sr)
-    logger.debug(f"Spec shapes: {[x.shape for x in spec]}")
-
-    verb, noun, prec, postc = model([x.to(device) for x in spec])
-
-    i_vs, i_ns = (
-        torch.argmax(verb, dim=-1),
-        torch.argmax(noun, dim=-1),
-    )
-    i_pres, i_poss = prec[0], postc[0]
-    logger.info(f"{i_pres=}")
-    logger.info(f"{i_poss=}")
-    logger.debug(f"Discrete pre: {discretize(i_pres)}")
-    logger.debug(f"Discrete posts: {discretize(i_poss)}")
-
-    for v, n, _, _, i_v, i_n, i_pre, i_pos in zip(verb, noun, prec, postc, i_vs, i_ns, prec, postc):
-        logger.debug(
-            f"\nVerb: {vocab_verb[i_v]} ({v[i_v]:.2%})\n"
-            f"Noun: {vocab_noun[i_n]} ({n[i_n]:.2%})\n"
-            f"Preconditions: {Predicate.predicates_from_vector(vector=discretize(i_pre), attributes=attributes, to_str=True,)}\n"
-            f"Postconditions: {Predicate.predicates_from_vector(vector=discretize(i_pos), attributes=attributes, to_str=True,)}\n"
-        )
 
 
 if __name__ == "__main__":

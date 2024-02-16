@@ -3,29 +3,21 @@ import pandas as pd
 import torch
 import torch.utils.data
 
-import slowfast.utils.logging as logging
-
 from .build import DATASET_REGISTRY
 from .epickitchens_record import EpicKitchensVideoRecord
 
 from . import transform as transform
 from . import utils as utils
 from .frame_loader import pack_frames_to_video_clip
-
-logger = logging.get_logger(__name__)
+from loguru import logger
 
 
 @DATASET_REGISTRY.register()
-class Epickitchens(torch.utils.data.Dataset):
+class EpicKitchens(torch.utils.data.Dataset):
 
     def __init__(self, cfg, mode):
 
-        assert mode in [
-            "train",
-            "val",
-            "test",
-            "train+val"
-        ], "Split '{}' not supported for EPIC-KITCHENS".format(mode)
+        assert mode in ["train", "val", "test", "train+val"], "Split '{}' not supported for EPIC-KITCHENS".format(mode)
         self.cfg = cfg
         self.mode = mode
         self.target_fps = 60
@@ -36,9 +28,7 @@ class Epickitchens(torch.utils.data.Dataset):
         if self.mode in ["train", "val", "train+val"]:
             self._num_clips = 1
         elif self.mode in ["test"]:
-            self._num_clips = (
-                    cfg.TEST.NUM_ENSEMBLE_VIEWS * cfg.TEST.NUM_SPATIAL_CROPS
-            )
+            self._num_clips = cfg.TEST.NUM_ENSEMBLE_VIEWS * cfg.TEST.NUM_SPATIAL_CROPS
 
         logger.info("Constructing EPIC-KITCHENS {}...".format(mode))
         self._construct_loader()
@@ -48,19 +38,25 @@ class Epickitchens(torch.utils.data.Dataset):
         Construct the video loader.
         """
         if self.mode == "train":
-            path_annotations_pickle = [os.path.join(self.cfg.EPICKITCHENS.ANNOTATIONS_DIR, self.cfg.EPICKITCHENS.TRAIN_LIST)]
+            path_annotations_pickle = [
+                os.path.join(self.cfg.EPICKITCHENS.ANNOTATIONS_DIR, self.cfg.EPICKITCHENS.TRAIN_LIST)
+            ]
         elif self.mode == "val":
-            path_annotations_pickle = [os.path.join(self.cfg.EPICKITCHENS.ANNOTATIONS_DIR, self.cfg.EPICKITCHENS.VAL_LIST)]
+            path_annotations_pickle = [
+                os.path.join(self.cfg.EPICKITCHENS.ANNOTATIONS_DIR, self.cfg.EPICKITCHENS.VAL_LIST)
+            ]
         elif self.mode == "test":
-            path_annotations_pickle = [os.path.join(self.cfg.EPICKITCHENS.ANNOTATIONS_DIR, self.cfg.EPICKITCHENS.TEST_LIST)]
+            path_annotations_pickle = [
+                os.path.join(self.cfg.EPICKITCHENS.ANNOTATIONS_DIR, self.cfg.EPICKITCHENS.TEST_LIST)
+            ]
         else:
-            path_annotations_pickle = [os.path.join(self.cfg.EPICKITCHENS.ANNOTATIONS_DIR, file)
-                                       for file in [self.cfg.EPICKITCHENS.TRAIN_LIST, self.cfg.EPICKITCHENS.VAL_LIST]]
+            path_annotations_pickle = [
+                os.path.join(self.cfg.EPICKITCHENS.ANNOTATIONS_DIR, file)
+                for file in [self.cfg.EPICKITCHENS.TRAIN_LIST, self.cfg.EPICKITCHENS.VAL_LIST]
+            ]
 
         for file in path_annotations_pickle:
-            assert os.path.exists(file), "{} dir not found".format(
-                file
-            )
+            assert os.path.exists(file), "{} dir not found".format(file)
 
         self._video_records = []
         self._spatial_temporal_idx = []
@@ -69,13 +65,11 @@ class Epickitchens(torch.utils.data.Dataset):
                 for idx in range(self._num_clips):
                     self._video_records.append(EpicKitchensVideoRecord(tup))
                     self._spatial_temporal_idx.append(idx)
-        assert (
-                len(self._video_records) > 0
-        ), "Failed to load EPIC-KITCHENS split {} from {}".format(
+        assert len(self._video_records) > 0, "Failed to load EPIC-KITCHENS split {} from {}".format(
             self.mode, path_annotations_pickle
         )
         logger.info(
-            "Constructing epickitchens dataloader (size: {}) from {}".format(
+            "Constructing epickitchens dataloader (size: {:,}) from {}".format(
                 len(self._video_records), path_annotations_pickle
             )
         )
@@ -103,18 +97,12 @@ class Epickitchens(torch.utils.data.Dataset):
             max_scale = self.cfg.DATA.TRAIN_JITTER_SCALES[1]
             crop_size = self.cfg.DATA.TRAIN_CROP_SIZE
         elif self.mode in ["test"]:
-            temporal_sample_index = (
-                self._spatial_temporal_idx[index]
-                // self.cfg.TEST.NUM_SPATIAL_CROPS
-            )
+            temporal_sample_index = self._spatial_temporal_idx[index] // self.cfg.TEST.NUM_SPATIAL_CROPS
             # spatial_sample_index is in [0, 1, 2]. Corresponding to left,
             # center, or right if width is larger than height, and top, middle,
             # or bottom if height is larger than width.
             if self.cfg.TEST.NUM_SPATIAL_CROPS == 3:
-                spatial_sample_index = (
-                    self._spatial_temporal_idx[index]
-                    % self.cfg.TEST.NUM_SPATIAL_CROPS
-                )
+                spatial_sample_index = self._spatial_temporal_idx[index] % self.cfg.TEST.NUM_SPATIAL_CROPS
             elif self.cfg.TEST.NUM_SPATIAL_CROPS == 1:
                 spatial_sample_index = 1
             min_scale, max_scale, crop_size = [self.cfg.DATA.TEST_CROP_SIZE] * 3
@@ -122,12 +110,10 @@ class Epickitchens(torch.utils.data.Dataset):
             # min_scale, max_scale, and crop_size are expect to be the same.
             assert len({min_scale, max_scale, crop_size}) == 1
         else:
-            raise NotImplementedError(
-                "Does not support {} mode".format(self.mode)
-            )
+            raise NotImplementedError("Does not support {} mode".format(self.mode))
 
         frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index)
-        
+
         # Perform color normalization.
         frames = frames.float()
         frames = frames / 255.0
@@ -149,17 +135,16 @@ class Epickitchens(torch.utils.data.Dataset):
         metadata = self._video_records[index].metadata
         return frames, label, index, metadata
 
-
     def __len__(self):
         return len(self._video_records)
 
     def spatial_sampling(
-            self,
-            frames,
-            spatial_idx=-1,
-            min_scale=256,
-            max_scale=320,
-            crop_size=224,
+        self,
+        frames,
+        spatial_idx=-1,
+        min_scale=256,
+        max_scale=320,
+        crop_size=224,
     ):
         """
         Perform spatial sampling on the given video frames. If spatial_idx is
@@ -182,17 +167,13 @@ class Epickitchens(torch.utils.data.Dataset):
         """
         assert spatial_idx in [-1, 0, 1, 2]
         if spatial_idx == -1:
-            frames, _ = transform.random_short_side_scale_jitter(
-                frames, min_scale, max_scale
-            )
+            frames, _ = transform.random_short_side_scale_jitter(frames, min_scale, max_scale)
             frames, _ = transform.random_crop(frames, crop_size)
             frames, _ = transform.horizontal_flip(0.5, frames)
         else:
             # The testing is deterministic and no jitter should be performed.
             # min_scale, max_scale, and crop_size are expect to be the same.
             assert len({min_scale, max_scale, crop_size}) == 1
-            frames, _ = transform.random_short_side_scale_jitter(
-                frames, min_scale, max_scale
-            )
+            frames, _ = transform.random_short_side_scale_jitter(frames, min_scale, max_scale)
             frames, _ = transform.uniform_crop(frames, crop_size, spatial_idx)
         return frames
