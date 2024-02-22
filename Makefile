@@ -30,7 +30,7 @@ bash-gpu:
 job-test:
 	@mkdir -p $(LOGS_DIR)
 	@DATE=$$(date +"%Y_%m_%d-%T"); \
-	JOB_NAME="sf-test"; \
+	JOB_NAME="sf-test-cm"; \
 	LOG_FILE="$(REPO_DIR)/$(LOGS_DIR)/$${DATE}-$${JOB_NAME}.log"; \
 	sbatch -N 1 \
 	    --ntasks 1 \

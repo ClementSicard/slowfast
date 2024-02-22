@@ -86,10 +86,10 @@ def perform_test(test_loader, model, test_meter, cfg):
         test_meter.iter_tic()
 
     # Log epoch stats and print the final testing results.
-    preds, labels, metadata = test_meter.finalize_metrics()
+    preds, labels, confusion_matrices, metadata = test_meter.finalize_metrics()
     test_meter.reset()
 
-    return preds, labels, metadata
+    return preds, labels, confusion_matrices, metadata
 
 
 def test(cfg):
@@ -152,7 +152,7 @@ def test(cfg):
     )
 
     # # Perform multi-view test on the entire dataset.
-    preds, labels, metadata = perform_test(test_loader, model, test_meter, cfg)
+    preds, labels, confusion_matrices, metadata = perform_test(test_loader, model, test_meter, cfg)
 
     if du.is_master_proc():
         v_labels = labels[0]
@@ -160,6 +160,8 @@ def test(cfg):
         results = {
             "verb_output": preds[0],
             "noun_output": preds[1],
+            "verb_cm": confusion_matrices[0],
+            "noun_cm": confusion_matrices[1],
             "narration_id": metadata,
             "verb_labels": v_labels,
             "noun_labels": n_labels,

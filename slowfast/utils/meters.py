@@ -962,6 +962,9 @@ class EPICTestMeter(object):
         self.metadata = np.zeros(num_videos, dtype=object)
         self.clip_count = torch.zeros((num_videos)).long()
 
+        self.verb_confusion_matrix = torch.zeros((num_cls[0], num_cls[0]))
+        self.noun_confusion_matrix = torch.zeros((num_cls[1], num_cls[1]))
+
         # Reset metric.
         self.reset()
 
@@ -974,6 +977,8 @@ class EPICTestMeter(object):
         self.verb_video_labels.zero_()
         self.noun_video_preds.zero_()
         self.noun_video_labels.zero_()
+        self.verb_confusion_matrix.zero_()
+        self.noun_confusion_matrix.zero_()
         self.metadata.fill(0)
 
     def update_stats(self, preds, labels, metadata, clip_ids):
@@ -991,12 +996,20 @@ class EPICTestMeter(object):
         """
         for ind in range(preds[0].shape[0]):
             vid_id = int(clip_ids[ind]) // self.num_clips
+            verb_label = labels[0][ind]
+            noun_label = labels[1][ind]
             self.verb_video_labels[vid_id] = labels[0][ind]
             self.verb_video_preds[vid_id] += preds[0][ind]
             self.noun_video_labels[vid_id] = labels[1][ind]
             self.noun_video_preds[vid_id] += preds[1][ind]
             self.metadata[vid_id] = metadata["narration_id"][ind]
             self.clip_count[vid_id] += 1
+
+            # Update confusion matrix
+            _, verb_pred = preds[0][ind].max(0)
+            _, noun_pred = preds[1][ind].max(0)
+            self.verb_confusion_matrix[verb_label, verb_pred] += 1
+            self.noun_confusion_matrix[noun_label, noun_pred] += 1
 
     def log_iter_stats(self, cur_iter):
         """
@@ -1044,5 +1057,6 @@ class EPICTestMeter(object):
         return (
             (self.verb_video_preds.numpy().copy(), self.noun_video_preds.numpy().copy()),
             (self.verb_video_labels.numpy().copy(), self.noun_video_labels.numpy().copy()),
+            (self.verb_confusion_matrix.numpy().copy(), self.noun_confusion_matrix.numpy().copy()),
             self.metadata.copy(),
         )

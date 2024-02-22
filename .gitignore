@@ -186,3 +186,4 @@ notebooks/waveforms
 weights
 *.sifpath
 *.ext3
+.swp
