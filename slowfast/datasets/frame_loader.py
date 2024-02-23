@@ -44,3 +44,50 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
     img_paths = [os.path.join(path_to_video, img_tmpl.format(idx.item())) for idx in frame_idx]
     frames = utils.retry_load_images(img_paths)
     return frames
+
+
+def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_fps=60):
+    # Load video by loading its extracted frames
+    path_to_video = "{}/{}".format(
+        cfg.EPICKITCHENS.VISUAL_DATA_DIR,
+        video_record.untrimmed_video_name,
+    )
+    img_tmpl = "frame_{:010d}.jpg"
+    fps, sampling_rate, num_samples = video_record.fps, cfg.DATA.SAMPLING_RATE, cfg.DATA.NUM_FRAMES
+    start_idx, end_idx = get_start_end_idx(
+        video_record.num_frames,
+        num_samples * sampling_rate * fps / target_fps,
+        temporal_sample_index,
+        cfg.TEST.NUM_ENSEMBLE_VIEWS,
+    )
+    start_idx, end_idx = start_idx + 1, end_idx + 1
+    frame_idx = temporal_sampling(
+        video_record.num_frames, start_idx, end_idx, num_samples, start_frame=video_record.start_frame
+    )
+    img_paths = [os.path.join(path_to_video, img_tmpl.format(idx.item())) for idx in frame_idx]
+    frames = utils.retry_load_images(img_paths)
+    return frames
+
+
+def pack_frames_to_video_clip_gru(cfg, video_record, temporal_sample_index, target_fps=60, start_offset: float = 0.0):
+    # Load video by loading its extracted frames
+    path_to_video = "{}/{}".format(
+        cfg.EPICKITCHENS.VISUAL_DATA_DIR,
+        video_record.untrimmed_video_name,
+    )
+    img_tmpl = "frame_{:010d}.jpg"
+    fps, sampling_rate, num_samples = video_record.fps, cfg.DATA.SAMPLING_RATE, cfg.DATA.NUM_FRAMES
+    start_idx, end_idx = get_start_end_idx(
+        video_record.num_frames,
+        num_samples * sampling_rate * fps / target_fps,
+        temporal_sample_index,
+        cfg.TEST.NUM_ENSEMBLE_VIEWS,
+        start_sample=video_record.start_audio_sample,
+    )
+    start_idx, end_idx = start_idx + 1, end_idx + 1
+    frame_idx = temporal_sampling(
+        video_record.num_frames, start_idx, end_idx, num_samples, start_frame=video_record.start_frame
+    )
+    img_paths = [os.path.join(path_to_video, img_tmpl.format(idx.item())) for idx in frame_idx]
+    frames = utils.retry_load_images(img_paths)
+    return frames

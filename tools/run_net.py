@@ -57,7 +57,7 @@ def parse_args():
         "--cfg",
         dest="cfg_file",
         help="Path to the config file",
-        default="configs/EPIC-KITCHENS/SLOWFAST_8x8_R50.yaml",
+        default="configs/EPIC-KITCHENS/SLOWFAST_GRU_8x8_R50.yaml",
         type=str,
     )
     parser.add_argument(
@@ -114,7 +114,7 @@ def main():
         cfg.WANDB.ENABLE = False
         cfg.DATA_LOADER.NUM_WORKERS = 4
         cfg.TRAIN.BATCH_SIZE = 2
-        cfg.TEST.BATCH_SIZE = 10
+        cfg.TEST.BATCH_SIZE = 1
 
     # Perform training.
     if cfg.TRAIN.ENABLE:

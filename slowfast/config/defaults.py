@@ -229,6 +229,12 @@ _C.DATA = CfgNode()
 # The path to the data directory.
 _C.DATA.PATH_TO_DATA_DIR = ""
 
+# Overlap duration of two consecutive frames, in seconds.
+_C.DATA.SUBCLIP_OVERLAP = 1.0
+
+# The number of frames in a clip.
+_C.DATA.MAX_NB_SUBCLIPS = 15
+
 # Video path prefix if any.
 _C.DATA.PATH_PREFIX = ""
 

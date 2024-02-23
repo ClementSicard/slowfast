@@ -27,7 +27,7 @@ def temporal_sampling(frames, start_idx, end_idx, num_samples):
     return frames
 
 
-def get_start_end_idx(video_size, clip_size, clip_idx, num_clips):
+def get_start_end_idx(video_size, clip_size, clip_idx, num_clips, start_sample=0):
     """
     Sample a clip of size clip_size from a video of size video_size and
     return the indices of the first and last frame of the clip. If clip_idx is
@@ -55,12 +55,10 @@ def get_start_end_idx(video_size, clip_size, clip_idx, num_clips):
         # Uniformly sample the clip with the given index.
         start_idx = delta * clip_idx / num_clips
     end_idx = start_idx + clip_size - 1
-    return start_idx, end_idx
+    return start_sample + start_idx, start_sample + end_idx
 
 
-def pyav_decode_stream(
-    container, start_pts, end_pts, stream, stream_name, buffer_size=0
-):
+def pyav_decode_stream(container, start_pts, end_pts, stream, stream_name, buffer_size=0):
     """
     Decode the video with PyAV decoder.
     Args:
@@ -100,9 +98,7 @@ def pyav_decode_stream(
     return result, max_pts
 
 
-def pyav_decode(
-    container, sampling_rate, num_frames, clip_idx, num_clips=10, target_fps=30
-):
+def pyav_decode(container, sampling_rate, num_frames, clip_idx, num_clips=10, target_fps=30):
     """
     Convert the video from its original fps to the target_fps. If the video
     support selective decoding (contain decoding information in the video head),

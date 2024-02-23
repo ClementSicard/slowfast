@@ -3,6 +3,7 @@
 
 """Video models."""
 
+from loguru import logger
 import torch
 import torch.nn as nn
 
@@ -144,6 +145,7 @@ class SlowFast(nn.Module):
         super(SlowFast, self).__init__()
         self.enable_detection = cfg.DETECTION.ENABLE
         self.num_pathways = 2
+        logger.warning(f"Batch size: {cfg.TRAIN.BATCH_SIZE if cfg.TRAIN.ENABLE else cfg.TEST.BATCH_SIZE}")
         self._construct_network(cfg)
         init_helper.init_weights(self, cfg.MODEL.FC_INIT_STD, cfg.RESNET.ZERO_INIT_FINAL_BN)
 
@@ -349,22 +351,34 @@ class SlowFast(nn.Module):
             )
 
     def forward(self, x, bboxes=None):
+        logger.debug(f"S1: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s1(x)
+        logger.debug(f"S1_fuse: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s1_fuse(x)
+        logger.debug(f"S2: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s2(x)
+        logger.debug(f"S2_fuse: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s2_fuse(x)
+        logger.debug(f"Pathway pooling: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         for pathway in range(self.num_pathways):
             pool = getattr(self, "pathway{}_pool".format(pathway))
             x[pathway] = pool(x[pathway])
+        logger.debug(f"S3: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s3(x)
+        logger.debug(f"S3_fuse: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s3_fuse(x)
+        logger.debug(f"S4: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s4(x)
+        logger.debug(f"S4_fuse: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s4_fuse(x)
+        logger.debug(f"S5: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s5(x)
+        logger.debug(f"Head: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         if self.enable_detection:
             x = self.head(x, bboxes)
         else:
             x = self.head(x)
+        logger.debug(f"Final output: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         return x
 
     def freeze_fn(self, freeze_mode):

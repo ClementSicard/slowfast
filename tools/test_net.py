@@ -10,7 +10,6 @@ import torch
 
 import slowfast.utils.checkpoint as cu
 import slowfast.utils.distributed as du
-import slowfast.utils.logging as logging
 import slowfast.utils.misc as misc
 from slowfast.datasets import loader
 from slowfast.models import build_model
@@ -59,6 +58,8 @@ def perform_test(test_loader, model, test_meter, cfg):
 
         # Perform the forward pass.
         preds = model(inputs)
+
+        exit(0)
 
         # Gather all the predictions across all the devices to perform ensemble.
         if cfg.NUM_GPUS > 1:

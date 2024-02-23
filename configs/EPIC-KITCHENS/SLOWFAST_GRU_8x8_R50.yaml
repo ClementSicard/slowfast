@@ -1,6 +1,6 @@
 TRAIN:
   ENABLE: False
-  DATASET: EpicKitchens
+  DATASET: EpicKitchensGRU
   BATCH_SIZE: 32
   EVAL_PERIOD: 2
   CHECKPOINT_PERIOD: 1
@@ -15,8 +15,6 @@ DATA:
   TRAIN_CROP_SIZE: 224
   TEST_CROP_SIZE: 256
   INPUT_CHANNEL_NUM: [3, 3]
-  MAX_NB_SUBCLIPS: 15
-  SUBCLIP_OVERLAP: 1.0
 
 SLOWFAST:
   ALPHA: 4
@@ -62,13 +60,13 @@ SOLVER:
 MODEL:
   NUM_CLASSES: [97, 300]
   ARCH: slowfast
-  MODEL_NAME: SlowFast
+  MODEL_NAME: SlowFastGRU
   LOSS_FUNC: cross_entropy
   DROPOUT_RATE: 0.5
 
 TEST:
   ENABLE: True
-  DATASET: EpicKitchens
+  DATASET: EpicKitchensGRU
   BATCH_SIZE: 8
   NUM_SPATIAL_CROPS: 1
 
@@ -86,4 +84,4 @@ EPICKITCHENS:
 NUM_GPUS: 1
 NUM_SHARDS: 1
 RNG_SEED: 0
-OUTPUT_DIR: results/original-slowfast-cm
+OUTPUT_DIR: results/slowfast-gru
