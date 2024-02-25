@@ -602,7 +602,22 @@ class SlowFastGRU(nn.Module):
         )
 
     def forward(self, x, bboxes=None):
-        x = self.s1(x)
+        # Reshape x for each pathway
+        reshaped_x = []
+        for pathway_x in x:
+            B, L, C, H, W = pathway_x.shape  # Extract dimensions
+
+            # Reshape to (batch_size * n_sequence, channels, time, frequency)
+            pathway_x_reshaped = pathway_x.view(B * L, C, H, W)
+            reshaped_x.append(pathway_x_reshaped)
+            assert pathway_x_reshaped.shape == (
+                B * L,
+                C,
+                H,
+                W,
+            ), f"Expected {B * L, C, H, W}, got {pathway_x_reshaped.shape}"
+
+        x = self.s1(reshaped_x)
         x = self.s1_fuse(x)
         x = self.s2(x)
         x = self.s2_fuse(x)

@@ -115,13 +115,7 @@ class EpicKitchensGRU(torch.utils.data.Dataset):
         num_subclips = video_record.num_subclips
         metadata = self._video_records[index].metadata
 
-        for i in range(
-            min(
-                num_subclips,
-                self.cfg.DATA.MAX_NB_SUBCLIPS,
-            ),
-        ):
-
+        for _ in range(min(num_subclips, self.cfg.DATA.MAX_NB_SUBCLIPS)):
             frames = pack_frames_to_video_clip(
                 cfg=self.cfg,
                 video_record=video_record,
@@ -138,13 +132,13 @@ class EpicKitchensGRU(torch.utils.data.Dataset):
             frames = frames.permute(3, 0, 1, 2)
 
             # Perform data augmentation.
-            # frames = self.spatial_sampling(
-            #     frames,
-            #     spatial_idx=spatial_sample_index,
-            #     min_scale=min_scale,
-            #     max_scale=max_scale,
-            #     crop_size=crop_size,
-            # )
+            frames = self.spatial_sampling(
+                frames,
+                spatial_idx=spatial_sample_index,
+                min_scale=min_scale,
+                max_scale=max_scale,
+                crop_size=crop_size,
+            )
 
             label = self._video_records[index].label
             slow_frame, fast_frame = utils.pack_pathway_output(self.cfg, frames)
@@ -197,7 +191,10 @@ class EpicKitchensGRU(torch.utils.data.Dataset):
         else:
             # The testing is deterministic and no jitter should be performed.
             # min_scale, max_scale, and crop_size are expect to be the same.
-            assert len({min_scale, max_scale, crop_size}) == 1
+            assert (
+                len({min_scale, max_scale, crop_size}) == 1
+            ), f"min_scale, max_scale, and crop_size are expected to be the same but got {min_scale=}, {max_scale=}, {crop_size=}"
+
             frames, _ = transform.random_short_side_scale_jitter(frames, min_scale, max_scale)
             frames, _ = transform.uniform_crop(frames, crop_size, spatial_idx)
         return frames
