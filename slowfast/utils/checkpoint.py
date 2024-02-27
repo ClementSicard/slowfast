@@ -9,10 +9,8 @@ from collections import OrderedDict
 import torch
 
 import slowfast.utils.distributed as du
-import slowfast.utils.logging as logging
 from slowfast.utils.c2_model_loading import get_name_convert_func
-
-logger = logging.get_logger(__name__)
+from loguru import logger
 
 
 def make_checkpoint_dir(path_to_job):
@@ -138,15 +136,11 @@ def inflate_weight(state_dict_2d, state_dict_3d):
         v3d = state_dict_3d[k]
         # Inflate the weight of 2D conv to 3D conv.
         if len(v2d.shape) == 4 and len(v3d.shape) == 5:
-            logger.info(
-                "Inflate {}: {} -> {}: {}".format(k, v2d.shape, k, v3d.shape)
-            )
+            logger.info("Inflate {}: {} -> {}: {}".format(k, v2d.shape, k, v3d.shape))
             # Dimension need to be match.
             assert v2d.shape[-2:] == v3d.shape[-2:]
             assert v2d.shape[:2] == v3d.shape[:2]
-            v3d = (
-                v2d.unsqueeze(2).repeat(1, 1, v3d.shape[2], 1, 1) / v3d.shape[2]
-            )
+            v3d = v2d.unsqueeze(2).repeat(1, 1, v3d.shape[2], 1, 1) / v3d.shape[2]
         if v2d.shape == v3d.shape:
             v3d = v2d
         state_dict_inflated[k] = v3d.clone()
@@ -176,9 +170,7 @@ def load_checkpoint(
     Returns:
         (int): the number of training epoch of the checkpoint.
     """
-    assert os.path.exists(
-        path_to_checkpoint
-    ), "Checkpoint '{}' not found".format(path_to_checkpoint)
+    assert os.path.exists(path_to_checkpoint), "Checkpoint '{}' not found".format(path_to_checkpoint)
     # Account for the DDP wrapper in the multi-gpu setting.
     ms = model.module if data_parallel else model
     if convert_from_caffe2:
@@ -189,12 +181,8 @@ def load_checkpoint(
         for key in caffe2_checkpoint["blobs"].keys():
             converted_key = name_convert_func(key)
             if converted_key in ms.state_dict():
-                if caffe2_checkpoint["blobs"][key].shape == tuple(
-                    ms.state_dict()[converted_key].shape
-                ):
-                    state_dict[converted_key] = torch.tensor(
-                        caffe2_checkpoint["blobs"][key]
-                    ).clone()
+                if caffe2_checkpoint["blobs"][key].shape == tuple(ms.state_dict()[converted_key].shape):
+                    state_dict[converted_key] = torch.tensor(caffe2_checkpoint["blobs"][key]).clone()
                     logger.info(
                         "{}: {} => {}: {}".format(
                             key,
@@ -213,37 +201,27 @@ def load_checkpoint(
                         )
                     )
             else:
-                if not any(
-                    prefix in key for prefix in ["momentum", "lr", "model_iter"]
-                ):
-                    logger.warn(
-                        "!! {}: can not be converted, got {}".format(
-                            key, converted_key
-                        )
-                    )
+                if not any(prefix in key for prefix in ["momentum", "lr", "model_iter"]):
+                    logger.warn("!! {}: can not be converted, got {}".format(key, converted_key))
         ms.load_state_dict(state_dict, strict=False)
         epoch = -1
     else:
-        # Load the checkpoint on CPU to avoid GPU mem spike.
         checkpoint = torch.load(path_to_checkpoint, map_location="cpu")
-        if inflation:
-            # Try to inflate the model.
-            model_state_dict_3d = (
-                model.module.state_dict()
-                if data_parallel
-                else model.state_dict()
-            )
-            inflated_model_dict = inflate_weight(
-                checkpoint["model_state"], model_state_dict_3d
-            )
-            ms.load_state_dict(inflated_model_dict, strict=False)
-        else:
-            ms.load_state_dict(checkpoint["model_state"])
-            # Load the optimizer state (commonly not done when fine-tuning)
-            if optimizer:
-                optimizer.load_state_dict(checkpoint["optimizer_state"])
-        if "epoch" in checkpoint.keys():
-            epoch = checkpoint["epoch"]
-        else:
-            epoch = -1
+        model_state_dict = ms.state_dict()
+        checkpoint_state_dict = checkpoint["model_state"]
+
+        # Identify keys that are missing in the checkpoint and will be randomly initialized.
+        missing_keys = set(model_state_dict.keys()) - set(checkpoint_state_dict.keys())
+        for key in missing_keys:
+            logger.warning(f"Key '{key}' found in model but not in checkpoint, will be randomly initialized.")
+
+        # Load the state dict with strict=False to allow ignoring non-matching keys.
+        ms.load_state_dict(checkpoint_state_dict, strict=False)
+
+        # Load the optimizer state if provided.
+        if optimizer and "optimizer_state" in checkpoint:
+            optimizer.load_state_dict(checkpoint["optimizer_state"])
+
+        epoch = checkpoint.get("epoch", -1)
+
     return epoch

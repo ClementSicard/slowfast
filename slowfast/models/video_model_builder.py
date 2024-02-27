@@ -3,9 +3,11 @@
 
 """Video models."""
 
+from typing import Optional
 from loguru import logger
 import torch
 import torch.nn as nn
+from slowfast.models import gru_head_helper
 
 import slowfast.utils.weight_init_helper as init_helper
 
@@ -580,7 +582,8 @@ class SlowFastGRU(nn.Module):
             dilation=cfg.RESNET.SPATIAL_DILATIONS[3],
         )
 
-        self.head = head_helper.ResNetBasicHead(
+        self.head = gru_head_helper.GRUResNetBasicHead(
+            cfg=cfg,
             dim_in=[
                 width_per_group * 32,
                 width_per_group * 32 // cfg.SLOWFAST.BETA_INV,
@@ -599,40 +602,61 @@ class SlowFastGRU(nn.Module):
                 ],
             ],
             dropout_rate=cfg.MODEL.DROPOUT_RATE,
+            gru_hidden_size=cfg.MODEL.GRU_HIDDEN_SIZE,
+            gru_num_layers=cfg.MODEL.GRU_NUM_LAYERS,
         )
 
-    def forward(self, x, bboxes=None):
+    def forward(
+        self,
+        x: torch.Tensor,
+        lengths: torch.Tensor,
+        noun_embeddings: Optional[torch.Tensor] = None,
+    ):
+        logger.debug(f"Input: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        initial_batch_shape = x[0].shape[:2]
         # Reshape x for each pathway
         reshaped_x = []
         for pathway_x in x:
-            B, L, C, H, W = pathway_x.shape  # Extract dimensions
+            B, L, C, T, H, W = pathway_x.shape  # Extract dimensions
 
             # Reshape to (batch_size * n_sequence, channels, time, frequency)
-            pathway_x_reshaped = pathway_x.view(B * L, C, H, W)
+            pathway_x_reshaped = pathway_x.view(B * L, C, T, H, W)
             reshaped_x.append(pathway_x_reshaped)
             assert pathway_x_reshaped.shape == (
                 B * L,
                 C,
+                T,
                 H,
                 W,
-            ), f"Expected {B * L, C, H, W}, got {pathway_x_reshaped.shape}"
-
+            ), f"Expected {B * L, C, T, H, W}, got {pathway_x_reshaped.shape}"
+        logger.debug(f"S1: {reshaped_x.shape if isinstance(reshaped_x, torch.Tensor) else [i.shape for i in reshaped_x]}")
         x = self.s1(reshaped_x)
+        logger.debug(f"S1 fuse: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s1_fuse(x)
+        logger.debug(f"S2: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s2(x)
+        logger.debug(f"S2 fuse: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s2_fuse(x)
+        logger.debug(f"Pathway pooling: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         for pathway in range(self.num_pathways):
             pool = getattr(self, "pathway{}_pool".format(pathway))
             x[pathway] = pool(x[pathway])
+        logger.debug(f"S3: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s3(x)
+        logger.debug(f"S3 fuse: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s3_fuse(x)
+        logger.debug(f"S4: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s4(x)
+        logger.debug(f"S4 fuse: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s4_fuse(x)
+        logger.debug(f"S5: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self.s5(x)
-        if self.enable_detection:
-            x = self.head(x, bboxes)
-        else:
-            x = self.head(x)
+        logger.debug(f"Head: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        x = self.head(
+            inputs=x,
+            lengths=lengths,
+            initial_batch_shape=initial_batch_shape,
+        )
         return x
 
     def freeze_fn(self, freeze_mode):

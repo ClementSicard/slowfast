@@ -18,6 +18,9 @@ from slowfast.config.defaults import get_cfg
 from tools.test_net import test
 from tools.train_net import train
 
+# CONFIG_PATH = "configs/EPIC-KITCHENS/SLOWFAST_8x8_R50.yaml"
+CONFIG_PATH = "configs/EPIC-KITCHENS/SLOWFAST_GRU_8x8_R50.yaml"
+
 
 def parse_args():
     """
@@ -57,7 +60,7 @@ def parse_args():
         "--cfg",
         dest="cfg_file",
         help="Path to the config file",
-        default="configs/EPIC-KITCHENS/SLOWFAST_GRU_8x8_R50.yaml",
+        default=CONFIG_PATH,
         type=str,
     )
     parser.add_argument(

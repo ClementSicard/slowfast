@@ -11,7 +11,7 @@ bash:
 	@echo "Running interactive bash session"
 	@srun --job-name "interactive bash" \
 		--cpus-per-task 4 \
-		--mem 16G \
+		--mem 64G \
 		--time 4:00:00 \
 		--pty bash
 
@@ -19,7 +19,7 @@ bash:
 .PHONY: bash-gpu
 bash-gpu:
 	@echo "Running interactive bash session"
-	@srun --job-name "bash" \
+	@srun --job-name "bash-gpu" \
 		--cpus-per-task 8 \
 		--mem 16G \
 		--gres gpu:1 \
@@ -49,5 +49,10 @@ job-test:
 
 .PHONY: test
 test:
+	@echo "Running the main script"
+	@./singrw <<< "python tools/run_net.py"
+
+.PHONY: train
+train:
 	@echo "Running the main script"
 	@./singrw <<< "python tools/run_net.py"

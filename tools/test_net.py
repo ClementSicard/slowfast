@@ -18,6 +18,86 @@ from loguru import logger
 from tqdm import tqdm
 
 
+def perform_test_gru(test_loader, model, test_meter, cfg):
+    """
+    For classification:
+    Perform mutli-view testing that uniformly samples N clips from a video along
+    its temporal axis. For each clip, it takes 3 crops to cover the spatial
+    dimension, followed by averaging the softmax scores across all Nx3 views to
+    form a video-level prediction. All video predictions are compared to
+    ground-truth labels and the final testing performance is logged.
+    For detection:
+    Perform fully-convolutional testing on the full frames without crop.
+    Args:
+        test_loader (loader): video testing loader.
+        model (model): the pretrained video model to test.
+        test_meter (TestMeter): testing meters to log and ensemble the testing
+            results.
+        cfg (CfgNode): configs. Details can be found in
+            slowfast/config/defaults.py
+    """
+    # Enable eval mode.
+    model.eval()
+
+    test_meter.iter_tic()
+
+    for cur_iter, batch in enumerate(
+        tqdm(
+            test_loader,
+            total=len(test_loader),
+            desc="Testing",
+            unit="batch",
+        ),
+    ):
+        inputs, lengths, labels, video_idx, meta = batch
+
+        # Transfer the data to the current GPU device.
+        if cfg.NUM_GPUS > 0:
+            if isinstance(inputs, (list,)):
+                for i in range(len(inputs)):
+                    inputs[i] = inputs[i].cuda(non_blocking=True)
+            else:
+                inputs = inputs.cuda(non_blocking=True)
+
+            # Transfer the data to the current GPU device.
+            labels = {k: v.cuda() for k, v in labels.items()}
+            video_idx = video_idx.cuda()
+
+        # Perform the forward pass.
+        preds = model(inputs, lengths=lengths)
+
+        # Gather all the predictions across all the devices to perform ensemble.
+        if cfg.NUM_GPUS > 1:
+            verb_preds, verb_labels, video_idx = du.all_gather([preds[0], labels["verb"], video_idx])
+
+            noun_preds, noun_labels, video_idx = du.all_gather([preds[1], labels["noun"], video_idx])
+            meta = du.all_gather_unaligned(meta)
+            metadata = {"narration_id": []}
+            for i in range(len(meta)):
+                metadata["narration_id"].extend(meta[i]["narration_id"])
+        else:
+            metadata = meta
+            verb_preds, verb_labels, video_idx = preds[0], labels["verb"], video_idx
+            noun_preds, noun_labels, video_idx = preds[1], labels["noun"], video_idx
+        test_meter.iter_toc()
+        # Update and log stats.
+        test_meter.update_stats(
+            (verb_preds.detach().cpu(), noun_preds.detach().cpu()),
+            (verb_labels.detach().cpu(), noun_labels.detach().cpu()),
+            metadata,
+            video_idx.detach().cpu(),
+        )
+        test_meter.log_iter_stats(cur_iter)
+
+        test_meter.iter_tic()
+
+    # Log epoch stats and print the final testing results.
+    preds, labels, confusion_matrices, metadata = test_meter.finalize_metrics()
+    test_meter.reset()
+
+    return preds, labels, confusion_matrices, metadata
+
+
 def perform_test(test_loader, model, test_meter, cfg):
     """
     For classification:
@@ -152,8 +232,11 @@ def test(cfg):
         len(test_loader),
     )
 
-    # # Perform multi-view test on the entire dataset.
-    preds, labels, confusion_matrices, metadata = perform_test(test_loader, model, test_meter, cfg)
+    if "GRU" in cfg.MODEL.MODEL_NAME:
+        preds, labels, confusion_matrices, metadata = perform_test_gru(test_loader, model, test_meter, cfg)
+    else:
+        # Perform multi-view test on the entire dataset.
+        preds, labels, confusion_matrices, metadata = perform_test(test_loader, model, test_meter, cfg)
 
     if du.is_master_proc():
         v_labels = labels[0]

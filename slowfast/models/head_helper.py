@@ -3,6 +3,7 @@
 
 """ResNe(X)t Head helper."""
 
+from loguru import logger
 import torch
 import torch.nn as nn
 
@@ -54,57 +55,70 @@ class ResNetBasicHead(nn.Module):
             self.dropout = nn.Dropout(dropout_rate)
         # Perform FC in a fully convolutional manner. The FC layer will be
         # initialized with a different std comparing to convolutional layers.
-        if isinstance(num_classes, (list, tuple)):
-            self.projection_verb = nn.Linear(sum(dim_in), num_classes[0], bias=True)
-            self.projection_noun = nn.Linear(sum(dim_in), num_classes[1], bias=True)
-        else:
-            self.projection = nn.Linear(sum(dim_in), num_classes, bias=True)
+        assert (
+            len(num_classes) == 2
+        ), f"num_classes must be a list of length 2 but was {len(num_classes)}: {num_classes}"
+
         self.num_classes = num_classes
+        self.dim_in = dim_in
+        F = sum(self.dim_in)
+        V, N = self.num_classes
+
+        self.projection_verb = nn.Linear(F, V, bias=True)
+        self.projection_noun = nn.Linear(F, N, bias=True)
         # Softmax for evaluation and testing.
         if act_func == "softmax":
             self.act = nn.Softmax(dim=4)
         elif act_func == "sigmoid":
             self.act = nn.Sigmoid()
         else:
-            raise NotImplementedError("{} is not supported as an activation" "function.".format(act_func))
+            raise NotImplementedError("{} is not supported as an activation function.".format(act_func))
 
     def forward(self, inputs):
+        logger.debug(f"Input: {inputs.shape if isinstance(inputs, torch.Tensor) else [i.shape for i in inputs]}")
+
         assert len(inputs) == self.num_pathways, "Input tensor does not contain {} pathway".format(self.num_pathways)
         pool_out = []
         for pathway in range(self.num_pathways):
             m = getattr(self, "pathway{}_avgpool".format(pathway))
             pool_out.append(m(inputs[pathway]))
+
+        logger.debug(f"Cat: {pool_out.shape if isinstance(pool_out, torch.Tensor) else [i.shape for i in pool_out]}")
         x = torch.cat(pool_out, 1)
-        # (N, C, T, H, W) -> (N, T, H, W, C).
+
+        # (B, C, T, H, W) -> (B, T, H, W, C).
+        logger.debug(f"Permute: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = x.permute((0, 2, 3, 4, 1))
+
+        logger.debug(f"After permute: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+
         # Perform dropout.
         if hasattr(self, "dropout"):
             x = self.dropout(x)
-        if isinstance(self.num_classes, (list, tuple)):
-            x_v = self.projection_verb(x)
-            x_n = self.projection_noun(x)
 
-            # Performs fully convlutional inference.
-            if not self.training:
-                x_v = self.act(x_v)
-                x_v = x_v.mean([1, 2, 3])
+        x_v = self.projection_verb(x)
+        x_n = self.projection_noun(x)
 
-            x_v = x_v.view(x_v.shape[0], -1)
+        # Performs fully convlutional inference.
+        x_v = self.fc_inference(x_v, self.act)
+        x_n = self.fc_inference(x_n, self.act)
+        return (x_v, x_n)
 
-            # Performs fully convlutional inference.
-            if not self.training:
-                x_n = self.act(x_n)
-                x_n = x_n.mean([1, 2, 3])
+    def fc_inference(self, x: torch.Tensor, act: nn.Module) -> torch.Tensor:
+        """
+        Perform fully convolutional inference.
 
-            x_n = x_n.view(x_n.shape[0], -1)
-            return (x_v, x_n)
-        else:
-            x = self.projection(x)
+        Args:
+            x (tensor): input tensor.
+            act (nn.Module): activation function.
 
-            # Performs fully convlutional inference.
-            if not self.training:
-                x = self.act(x)
-                x = x.mean([1, 2, 3])
+        Returns:
+            tensor: output tensor.
+        """
+        if not self.training:
+            x = act(x)
+            x = x.mean([1, 2, 3])
 
-            x = x.view(x.shape[0], -1)
-            return x
+        x = x.view(x.shape[0], -1)
+
+        return x

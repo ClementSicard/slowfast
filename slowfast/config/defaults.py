@@ -191,6 +191,10 @@ _C.MODEL.DROPOUT_RATE = 0.5
 # The std to initialize the fc layer(s).
 _C.MODEL.FC_INIT_STD = 0.01
 
+_C.MODEL.GRU_HIDDEN_SIZE = 1_152
+
+_C.MODEL.GRU_NUM_LAYERS = 2
+
 
 # -----------------------------------------------------------------------------
 # WandB options
@@ -233,7 +237,7 @@ _C.DATA.PATH_TO_DATA_DIR = ""
 _C.DATA.SUBCLIP_OVERLAP = 1.0
 
 # The number of frames in a clip.
-_C.DATA.MAX_NB_SUBCLIPS = 15
+_C.DATA.MAX_NB_SUBCLIPS = 25
 
 # Video path prefix if any.
 _C.DATA.PATH_PREFIX = ""
@@ -457,6 +461,8 @@ _C.EPICKITCHENS = CfgNode()
 _C.EPICKITCHENS.VISUAL_DATA_DIR = ""
 
 _C.EPICKITCHENS.ANNOTATIONS_DIR = ""
+
+_C.EPICKITCHENS.SINGLE_BATCH = False
 
 _C.EPICKITCHENS.TRAIN_LIST = "EPIC_100_train.pkl"
 

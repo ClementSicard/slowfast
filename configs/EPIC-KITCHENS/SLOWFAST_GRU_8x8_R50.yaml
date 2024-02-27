@@ -1,12 +1,12 @@
 TRAIN:
-  ENABLE: False
+  ENABLE: True
   DATASET: EpicKitchensGRU
-  BATCH_SIZE: 32
+  BATCH_SIZE: 1
   EVAL_PERIOD: 2
   CHECKPOINT_PERIOD: 1
-  CHECKPOINT_FILE_PATH: weights/SLOWFAST_EK100.pkl
-  AUTO_RESUME: True
-  FINETUNE: True
+  CHECKPOINT_FILE_PATH: weights/SLOWFAST_EK100_no_opti.pkl
+  AUTO_RESUME: False
+  FINETUNE: False
 
 DATA:
   NUM_FRAMES: 32
@@ -67,7 +67,7 @@ MODEL:
 TEST:
   ENABLE: True
   DATASET: EpicKitchensGRU
-  BATCH_SIZE: 8
+  BATCH_SIZE: 1
   NUM_SPATIAL_CROPS: 1
 
 DATA_LOADER:
@@ -75,11 +75,15 @@ DATA_LOADER:
   PIN_MEMORY: True
 
 EPICKITCHENS:
+  SINGLE_BATCH: True
   TRAIN_PLUS_VAL: False
   TRAIN_LIST: data/epic-kitchens-100-annotations/EPIC_100_train.pkl
   VAL_LIST: data/epic-kitchens-100-annotations/EPIC_100_validation.pkl
   TEST_LIST: data/epic-kitchens-100-annotations/EPIC_100_validation.pkl
   VISUAL_DATA_DIR: /rgb_frames
+
+WANDB:
+  ENABLE: True
 
 NUM_GPUS: 1
 NUM_SHARDS: 1

@@ -56,7 +56,10 @@ class EpicKitchensGRU(torch.utils.data.Dataset):
         self._video_records = []
         self._spatial_temporal_idx = []
         for file in path_annotations_pickle:
-            for tup in pd.read_pickle(file).iterrows():
+            df = pd.read_pickle(file)
+            for tup in (
+                df.iterrows() if not self.cfg.EPICKITCHENS.SINGLE_BATCH else df[: self.cfg.TRAIN.BATCH_SIZE].iterrows()
+            ):
                 for idx in range(self._num_clips):
                     self._video_records.append(
                         EpicKitchensVideoRecordGRU(
@@ -138,6 +141,7 @@ class EpicKitchensGRU(torch.utils.data.Dataset):
                 min_scale=min_scale,
                 max_scale=max_scale,
                 crop_size=crop_size,
+                mode="train" if self.cfg.TRAIN.ENABLE else "test",
             )
 
             label = self._video_records[index].label
@@ -163,6 +167,7 @@ class EpicKitchensGRU(torch.utils.data.Dataset):
         min_scale=256,
         max_scale=320,
         crop_size=224,
+        mode="train",
     ):
         """
         Perform spatial sampling on the given video frames. If spatial_idx is
@@ -184,7 +189,7 @@ class EpicKitchensGRU(torch.utils.data.Dataset):
             frames (tensor): spatially sampled frames.
         """
         assert spatial_idx in [-1, 0, 1, 2]
-        if spatial_idx == -1:
+        if spatial_idx == -1 or mode == "train":
             frames, _ = transform.random_short_side_scale_jitter(frames, min_scale, max_scale)
             frames, _ = transform.random_crop(frames, crop_size)
             frames, _ = transform.horizontal_flip(0.5, frames)

@@ -8,6 +8,9 @@ from scipy.stats import gmean
 import pprint
 import torch
 from fvcore.nn.precise_bn import get_bn_modules, update_bn_stats
+from fvcore.common.config import CfgNode
+from tqdm import tqdm
+import wandb
 
 import slowfast.models.losses as losses
 import slowfast.models.optimizer as optim
@@ -20,6 +23,134 @@ from slowfast.datasets import loader
 from slowfast.models import build_model
 from slowfast.utils.meters import AVAMeter, TrainMeter, ValMeter, EPICTrainMeter, EPICValMeter
 from loguru import logger
+
+from .eval_net import eval_epoch, eval_epoch_gru
+
+
+def train_epoch_gru(train_loader, model, optimizer, train_meter, cur_epoch, cfg):
+    """
+    Perform the video training for one epoch.
+    Args:
+        train_loader (loader): video training loader.
+        model (model): the video model to train.
+        optimizer (optim): the optimizer to perform optimization on the model's
+            parameters.
+        train_meter (TrainMeter): training meters to log the training performance.
+        cur_epoch (int): current epoch of training.
+        cfg (CfgNode): configs. Details can be found in
+            slowfast/config/defaults.py
+    """
+    # Enable train mode.
+    model.train()
+    if cfg.BN.FREEZE:
+        model.module.freeze_fn("bn_statistics") if cfg.NUM_GPUS > 1 else model.freeze_fn("bn_statistics")
+
+    train_meter.iter_tic()
+    data_size = len(train_loader)
+
+    for cur_iter, batch in enumerate(
+        tqdm(
+            train_loader,
+            total=len(train_loader),
+            desc="Training",
+            unit="batch",
+        ),
+    ):
+        inputs, lengths, labels, video_idx, meta = batch
+
+        # Transfer the data to the current GPU device.
+        if cfg.NUM_GPUS > 0:
+            if isinstance(inputs, (list,)):
+                for i in range(len(inputs)):
+                    inputs[i] = inputs[i].cuda(non_blocking=True)
+            else:
+                inputs = inputs.cuda(non_blocking=True)
+
+            labels = {k: v.cuda() for k, v in labels.items()}
+            video_idx = video_idx.cuda()
+
+        # Update the learning rate.
+        lr = optim.get_epoch_lr(cur_epoch + float(cur_iter) / data_size, cfg)
+        optim.set_lr(optimizer, lr)
+
+        # Perform the forward pass.
+        preds = model(inputs, lengths=lengths)
+
+        # Explicitly declare reduction to mean.
+        loss_fun = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)(reduction="mean")
+
+        # Compute the loss.
+        loss_verb = loss_fun(preds[0], labels["verb"])
+        loss_noun = loss_fun(preds[1], labels["noun"])
+        loss = 0.5 * (loss_verb + loss_noun)
+
+        # check Nan Loss.
+        misc.check_nan_losses(loss)
+
+        # Perform the backward pass.
+        optimizer.zero_grad()
+        loss.backward()
+        # Update the parameters.
+        optimizer.step()
+
+        # Compute the verb accuracies.
+        verb_top1_acc, verb_top5_acc = metrics.topk_accuracies(preds[0], labels["verb"], (1, 5))
+
+        # Gather all the predictions across all the devices.
+        if cfg.NUM_GPUS > 1:
+            loss_verb, verb_top1_acc, verb_top5_acc = du.all_reduce([loss_verb, verb_top1_acc, verb_top5_acc])
+
+        # Copy the stats from GPU to CPU (sync point).
+        loss_verb, verb_top1_acc, verb_top5_acc = (
+            loss_verb.item(),
+            verb_top1_acc.item(),
+            verb_top5_acc.item(),
+        )
+
+        # Compute the noun accuracies.
+        noun_top1_acc, noun_top5_acc = metrics.topk_accuracies(preds[1], labels["noun"], (1, 5))
+
+        # Gather all the predictions across all the devices.
+        if cfg.NUM_GPUS > 1:
+            loss_noun, noun_top1_acc, noun_top5_acc = du.all_reduce([loss_noun, noun_top1_acc, noun_top5_acc])
+
+        # Copy the stats from GPU to CPU (sync point).
+        loss_noun, noun_top1_acc, noun_top5_acc = (
+            loss_noun.item(),
+            noun_top1_acc.item(),
+            noun_top5_acc.item(),
+        )
+
+        # Compute the action accuracies.
+        action_top1_acc, action_top5_acc = metrics.multitask_topk_accuracies(
+            (preds[0], preds[1]), (labels["verb"], labels["noun"]), (1, 5)
+        )
+        # Gather all the predictions across all the devices.
+        if cfg.NUM_GPUS > 1:
+            loss, action_top1_acc, action_top5_acc = du.all_reduce([loss, action_top1_acc, action_top5_acc])
+
+        # Copy the stats from GPU to CPU (sync point).
+        loss, action_top1_acc, action_top5_acc = (
+            loss.item(),
+            action_top1_acc.item(),
+            action_top5_acc.item(),
+        )
+
+        train_meter.iter_toc()
+        # Update and log stats.
+        train_meter.update_stats(
+            (verb_top1_acc, noun_top1_acc, action_top1_acc),
+            (verb_top5_acc, noun_top5_acc, action_top5_acc),
+            (loss_verb, loss_noun, loss),
+            lr,
+            inputs[0].size(0) * cfg.NUM_GPUS,
+        )
+
+        train_meter.log_iter_stats(cur_epoch, cur_iter)
+        train_meter.iter_tic()
+    # Log epoch stats.
+    train_meter.log_epoch_stats(cur_epoch)
+    train_meter.reset()
 
 
 def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, cfg):
@@ -43,7 +174,14 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, cfg):
     train_meter.iter_tic()
     data_size = len(train_loader)
 
-    for cur_iter, (inputs, labels, _, meta) in enumerate(train_loader):
+    for cur_iter, (inputs, labels, _, meta) in enumerate(
+        tqdm(
+            train_loader,
+            total=len(train_loader),
+            desc="Training",
+            unit="batch",
+        ),
+    ):
         # Transfer the data to the current GPU device.
         if isinstance(inputs, (list,)):
             for i in range(len(inputs)):
@@ -73,26 +211,16 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, cfg):
             # Perform the forward pass.
             preds = model(inputs)
 
-        if isinstance(labels, (dict,)):
-            # Explicitly declare reduction to mean.
-            loss_fun = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)(reduction="mean")
+        # Explicitly declare reduction to mean.
+        loss_fun = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)(reduction="mean")
 
-            # Compute the loss.
-            loss_verb = loss_fun(preds[0], labels["verb"])
-            loss_noun = loss_fun(preds[1], labels["noun"])
-            loss = 0.5 * (loss_verb + loss_noun)
+        # Compute the loss.
+        loss_verb = loss_fun(preds[0], labels["verb"])
+        loss_noun = loss_fun(preds[1], labels["noun"])
+        loss = 0.5 * (loss_verb + loss_noun)
 
-            # check Nan Loss.
-            misc.check_nan_losses(loss)
-        else:
-            # Explicitly declare reduction to mean.
-            loss_fun = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)(reduction="mean")
-
-            # Compute the loss.
-            loss = loss_fun(preds, labels)
-
-            # check Nan Loss.
-            misc.check_nan_losses(loss)
+        # check Nan Loss.
+        misc.check_nan_losses(loss)
 
         # Perform the backward pass.
         optimizer.zero_grad()
@@ -188,120 +316,6 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, cfg):
     train_meter.reset()
 
 
-@torch.no_grad()
-def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg):
-    """
-    Evaluate the model on the val set.
-    Args:
-        val_loader (loader): data loader to provide validation data.
-        model (model): model to evaluate the performance.
-        val_meter (ValMeter): meter instance to record and calculate the metrics.
-        cur_epoch (int): number of the current epoch of training.
-        cfg (CfgNode): configs. Details can be found in
-            slowfast/config/defaults.py
-    """
-    # Evaluation mode enabled. The running stats would not be updated.
-    model.eval()
-    val_meter.iter_tic()
-
-    for cur_iter, (inputs, labels, _, meta) in enumerate(val_loader):
-        # Transferthe data to the current GPU device.
-        if isinstance(inputs, (list,)):
-            for i in range(len(inputs)):
-                inputs[i] = inputs[i].cuda(non_blocking=True)
-        else:
-            inputs = inputs.cuda(non_blocking=True)
-        if isinstance(labels, (dict,)):
-            labels = {k: v.cuda() for k, v in labels.items()}
-        else:
-            labels = labels.cuda()
-
-        if cfg.DETECTION.ENABLE:
-            for key, val in meta.items():
-                if isinstance(val, (list,)):
-                    for i in range(len(val)):
-                        val[i] = val[i].cuda(non_blocking=True)
-                else:
-                    meta[key] = val.cuda(non_blocking=True)
-            # Compute the predictions.
-            preds = model(inputs, meta["boxes"])
-
-            preds = preds.cpu()
-            ori_boxes = meta["ori_boxes"].cpu()
-            metadata = meta["metadata"].cpu()
-
-            if cfg.NUM_GPUS > 1:
-                preds = torch.cat(du.all_gather_unaligned(preds), dim=0)
-                ori_boxes = torch.cat(du.all_gather_unaligned(ori_boxes), dim=0)
-                metadata = torch.cat(du.all_gather_unaligned(metadata), dim=0)
-
-            val_meter.iter_toc()
-            # Update and log stats.
-            val_meter.update_stats(preds.cpu(), ori_boxes.cpu(), metadata.cpu())
-        else:
-            preds = model(inputs)
-            if isinstance(labels, (dict,)):
-                # Compute the verb accuracies.
-                verb_top1_acc, verb_top5_acc = metrics.topk_accuracies(preds[0], labels["verb"], (1, 5))
-
-                # Combine the errors across the GPUs.
-                if cfg.NUM_GPUS > 1:
-                    verb_top1_acc, verb_top5_acc = du.all_reduce([verb_top1_acc, verb_top5_acc])
-
-                # Copy the errors from GPU to CPU (sync point).
-                verb_top1_acc, verb_top5_acc = verb_top1_acc.item(), verb_top5_acc.item()
-
-                # Compute the noun accuracies.
-                noun_top1_acc, noun_top5_acc = metrics.topk_accuracies(preds[1], labels["noun"], (1, 5))
-
-                # Combine the errors across the GPUs.
-                if cfg.NUM_GPUS > 1:
-                    noun_top1_acc, noun_top5_acc = du.all_reduce([noun_top1_acc, noun_top5_acc])
-
-                # Copy the errors from GPU to CPU (sync point).
-                noun_top1_acc, noun_top5_acc = noun_top1_acc.item(), noun_top5_acc.item()
-
-                # Compute the action accuracies.
-                action_top1_acc, action_top5_acc = metrics.multitask_topk_accuracies(
-                    (preds[0], preds[1]), (labels["verb"], labels["noun"]), (1, 5)
-                )
-                # Combine the errors across the GPUs.
-                if cfg.NUM_GPUS > 1:
-                    action_top1_acc, action_top5_acc = du.all_reduce([action_top1_acc, action_top5_acc])
-
-                # Copy the errors from GPU to CPU (sync point).
-                action_top1_acc, action_top5_acc = action_top1_acc.item(), action_top5_acc.item()
-
-                val_meter.iter_toc()
-                # Update and log stats.
-                val_meter.update_stats(
-                    (verb_top1_acc, noun_top1_acc, action_top1_acc),
-                    (verb_top5_acc, noun_top5_acc, action_top5_acc),
-                    inputs[0].size(0) * cfg.NUM_GPUS,
-                )
-            else:
-                # Compute the errors.
-                num_topks_correct = metrics.topks_correct(preds, labels, (1, 5))
-
-                # Combine the errors across the GPUs.
-                top1_err, top5_err = [(1.0 - x / preds.size(0)) * 100.0 for x in num_topks_correct]
-                if cfg.NUM_GPUS > 1:
-                    top1_err, top5_err = du.all_reduce([top1_err, top5_err])
-
-                # Copy the errors from GPU to CPU (sync point).
-                top1_err, top5_err = top1_err.item(), top5_err.item()
-
-                val_meter.iter_toc()
-                # Update and log stats.
-                val_meter.update_stats(top1_err, top5_err, inputs[0].size(0) * cfg.NUM_GPUS)
-        val_meter.log_iter_stats(cur_epoch, cur_iter)
-        val_meter.iter_tic()
-    # Log epoch stats.
-    is_best_epoch = val_meter.log_epoch_stats(cur_epoch)
-    val_meter.reset()
-    return is_best_epoch
-
-
 def calculate_and_update_precise_bn(loader, model, num_iters=200):
     """
     Update the stats in bn layers by calculate the precise stats.
@@ -324,7 +338,7 @@ def calculate_and_update_precise_bn(loader, model, num_iters=200):
     update_bn_stats(model, _gen_loader(), num_iters)
 
 
-def train(cfg):
+def train(cfg: CfgNode):
     """
     Train a video model for many epochs on train set and evaluate it on val set.
     Args:
@@ -359,6 +373,7 @@ def train(cfg):
         last_checkpoint = cu.get_last_checkpoint(cfg.OUTPUT_DIR)
         checkpoint_epoch = cu.load_checkpoint(last_checkpoint, model, cfg.NUM_GPUS > 1, optimizer)
         start_epoch = checkpoint_epoch + 1
+
     elif cfg.TRAIN.CHECKPOINT_FILE_PATH != "" and not cfg.TRAIN.FINETUNE:
         logger.info("Load from given checkpoint file.")
         checkpoint_epoch = cu.load_checkpoint(
@@ -370,6 +385,7 @@ def train(cfg):
             convert_from_caffe2=cfg.TRAIN.CHECKPOINT_TYPE == "caffe2",
         )
         start_epoch = checkpoint_epoch + 1
+
     elif cfg.TRAIN.CHECKPOINT_FILE_PATH != "" and cfg.TRAIN.FINETUNE:
         logger.info("Load from given checkpoint file. Finetuning.")
         _ = cu.load_checkpoint(
@@ -385,7 +401,7 @@ def train(cfg):
         start_epoch = 0
 
     # Create the video train and val loaders.
-    if cfg.TRAIN.DATASET != "epickitchens" or not cfg.EPICKITCHENS.TRAIN_PLUS_VAL:
+    if not cfg.EPICKITCHENS.TRAIN_PLUS_VAL:
         train_loader = loader.construct_loader(cfg, "train")
         val_loader = loader.construct_loader(cfg, "val")
     else:
@@ -393,16 +409,13 @@ def train(cfg):
         val_loader = loader.construct_loader(cfg, "val")
 
     # Create meters.
-    if cfg.DETECTION.ENABLE:
-        train_meter = AVAMeter(len(train_loader), cfg, mode="train")
-        val_meter = AVAMeter(len(val_loader), cfg, mode="val")
-    else:
-        if cfg.TRAIN.DATASET == "epickitchens":
-            train_meter = EPICTrainMeter(len(train_loader), cfg)
-            val_meter = EPICValMeter(len(val_loader), cfg)
-        else:
-            train_meter = TrainMeter(len(train_loader), cfg)
-            val_meter = ValMeter(len(val_loader), cfg)
+    train_meter = EPICTrainMeter(len(train_loader), cfg)
+    val_meter = EPICValMeter(len(val_loader), cfg)
+
+    if cfg.WANDB.ENABLE:
+        project_name = cfg.MODEL.MODEL_NAME
+        wandb.init(project=project_name, config=cfg)
+        wandb.watch(model)
 
     # Perform the training loop.
     logger.info("Start epoch: {}".format(start_epoch + 1))
@@ -411,7 +424,10 @@ def train(cfg):
         # Shuffle the dataset.
         loader.shuffle_dataset(train_loader, cur_epoch)
         # Train for one epoch.
-        train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, cfg)
+        if "GRU" not in cfg.MODEL.MODEL_NAME:
+            train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, cfg)
+        else:
+            train_epoch_gru(train_loader, model, optimizer, train_meter, cur_epoch, cfg)
 
         # Compute precise BN stats.
         if cfg.BN.USE_PRECISE_STATS and len(get_bn_modules(model)) > 0:
@@ -420,8 +436,13 @@ def train(cfg):
         # Save a checkpoint.
         if cu.is_checkpoint_epoch(cur_epoch, cfg.TRAIN.CHECKPOINT_PERIOD):
             cu.save_checkpoint(cfg.OUTPUT_DIR, model, optimizer, cur_epoch, cfg)
+
         # Evaluate the model on validation set.
         if misc.is_eval_epoch(cfg, cur_epoch):
-            is_best_epoch = eval_epoch(val_loader, model, val_meter, cur_epoch, cfg)
+            if "GRU" in cfg.MODEL.MODEL_NAME:
+                is_best_epoch = eval_epoch_gru(val_loader, model, val_meter, cur_epoch, cfg)
+            else:
+                is_best_epoch = eval_epoch(val_loader, model, val_meter, cur_epoch, cfg)
+
             if is_best_epoch:
                 cu.save_checkpoint(cfg.OUTPUT_DIR, model, optimizer, cur_epoch, cfg, is_best_epoch=is_best_epoch)

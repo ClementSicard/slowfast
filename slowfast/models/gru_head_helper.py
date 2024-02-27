@@ -1,4 +1,5 @@
 from typing import List, Optional
+from loguru import logger
 
 import torch
 import torch.nn as nn
@@ -15,6 +16,7 @@ class GRUResNetBasicHead(nn.Module):
 
     def __init__(
         self,
+        cfg,
         dim_in,
         num_classes,
         pool_size,
@@ -22,7 +24,6 @@ class GRUResNetBasicHead(nn.Module):
         act_func="softmax",
         gru_hidden_size=512,
         gru_num_layers=2,
-        only_action_recognition: bool = False,
     ):
         """
         The `__init__` method of any subclass should also contain these
@@ -46,12 +47,24 @@ class GRUResNetBasicHead(nn.Module):
         super(GRUResNetBasicHead, self).__init__()
         assert len({len(pool_size), len(dim_in)}) == 1, "pathway dimensions are not consistent."
         self.num_pathways = len(pool_size)
+
+        self.cfg = cfg
+
+        assert (
+            len(num_classes) == 2
+        ), f"num_classes must be a list of length 2 but was {len(num_classes)}: {num_classes}"
+        self.num_classes = num_classes
+
+        # GRU specific parameters
         self.gru_hidden_size = gru_hidden_size
         self.gru_num_layers = gru_num_layers
-        self.only_action_recognition = only_action_recognition
+        self.dim_in = dim_in
+
+        F = sum(self.dim_in)
+        V, N = self.num_classes
 
         for pathway in range(self.num_pathways):
-            avg_pool = nn.AvgPool2d(pool_size[pathway], stride=1)
+            avg_pool = nn.AvgPool3d(pool_size[pathway], stride=1)
             self.add_module("pathway{}_avgpool".format(pathway), avg_pool)
 
         if dropout_rate > 0.0:
@@ -59,54 +72,27 @@ class GRUResNetBasicHead(nn.Module):
 
         # GRU Module
         self.gru = nn.GRU(
-            input_size=sum(dim_in),  # Assuming the input size is the sum of the dimensions of the pathways
+            input_size=F,  # Assuming the input size is the sum of the dimensions of the pathways
             hidden_size=gru_hidden_size,
             num_layers=gru_num_layers,
             batch_first=True,  # Assuming that the first dimension of the input is the batch
             bidirectional=True,  # To prevent labelling of empty frames
         )
+        D = 2 if self.gru.bidirectional else 1
 
-        # Project back the GRU output to the number features of the input
-        self.projection_to_dim_in = nn.Linear(gru_hidden_size * 2, sum(dim_in), bias=True)
         # Perform FC in a fully convolutional manner. The FC layer will be
         # initialized with a different std comparing to convolutional layers.
-        assert len(num_classes) == (
-            3 if not self.only_action_recognition else 2
-        ), f"num_classes must be a list of length {(3 if not self.only_action_recognition else 2)} but was {len(num_classes)}: {num_classes}"
 
-        self.num_classes = num_classes
-        self.dim_in = dim_in
-
-        # At this stage, a batch has shape (B * N_s, 1, )
-
-        if isinstance(self.num_classes, (list, tuple)):
-            F = sum(self.dim_in)
-
-            if not self.only_action_recognition:
-                V, N, P = self.num_classes
-                self.projection_min_1 = nn.Linear(F, P, bias=True)
-                self.projection_0 = nn.Linear(F, P, bias=True)
-                self.projection_1 = nn.Linear(F, P, bias=True)
-
-                self.state_act = nn.Softmax(dim=2)  # Softmax on [B, N, 3, P]
-            else:
-                V, N = self.num_classes
-
-            self.projection_verb = nn.Linear(F, V, bias=True)
-            self.projection_noun = nn.Linear(F, N, bias=True)
-
-        else:
-            self.projection = nn.Linear(F, num_classes, bias=True)
+        self.projection_verb = nn.Linear(F, V, bias=True)
+        self.projection_noun = nn.Linear(F, N, bias=True)
         # Softmax for evaluation and testing.
         if act_func == "softmax":
-            # Dimension 3 is the size of the embedding space before the projection.
-            # A batch has the shape (B * N_s, 1, 1, 2304) -> 2304
-            self.act = nn.Softmax(dim=3)
+            self.act = nn.Softmax(dim=-1)
         elif act_func == "sigmoid":
             self.act = nn.Sigmoid()
 
         else:
-            raise NotImplementedError(f"{act_func} is not supported as an activation function")
+            raise NotImplementedError("{} is not supported as an activation function.".format(act_func))
 
     def forward(
         self,
@@ -122,6 +108,7 @@ class GRUResNetBasicHead(nn.Module):
 
         "Projecting" here means that we are reducing the dimensionality of the input tensor to the number of classes.
         """
+        logger.debug(f"Input: {inputs.shape if isinstance(inputs, torch.Tensor) else [i.shape for i in inputs]}")
 
         assert len(inputs) == self.num_pathways, "Input tensor does not contain {} pathway".format(self.num_pathways)
         pool_out = []
@@ -129,10 +116,14 @@ class GRUResNetBasicHead(nn.Module):
             m = getattr(self, "pathway{}_avgpool".format(pathway))
             pool_out.append(m(inputs[pathway]))
 
+        logger.debug(f"Cat: {pool_out.shape if isinstance(pool_out, torch.Tensor) else [i.shape for i in pool_out]}")
         x = torch.cat(pool_out, 1)
 
-        # (B*N, F, 1, 1) -> (B*N, 1, 1, F)
-        x = x.permute((0, 2, 3, 1))
+        # (B*L, C, T, H, W) -> (B*L, T, H, W, C).
+        logger.debug(f"Permute: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        x = x.permute((0, 2, 3, 4, 1))
+
+        logger.debug(f"After permute: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
 
         """
         Starting from here, x has shape (B * N_s, 1, 1, n_features_asf)
@@ -142,74 +133,62 @@ class GRUResNetBasicHead(nn.Module):
         if hasattr(self, "dropout"):
             x = self.dropout(x)
 
+        logger.debug(f"Before GRU: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self._gru(
             x=x,
             noun_embeddings=noun_embeddings,
             initial_batch_shape=initial_batch_shape,
             lengths=lengths,
         )
+        logger.debug(f"After GRU: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
 
-        if isinstance(self.num_classes, (list, tuple)):
-            # Recover B, N
-            B, N = initial_batch_shape
+        # Recover B, N
+        B, N = initial_batch_shape
+        N_v, N_n = self.num_classes
 
-            if not self.only_action_recognition:
-                N_v, N_n, N_p = self.num_classes
-            else:
-                N_v, N_n = self.num_classes
+        x_v = self.projection_verb(x)  # (B*N, 1, 1, F) -> (B*N, 1, 1, N_v)
+        x_v = self.fc_inference(x_v, self.act)
+        x_v = x_v.view(B, N, N_v)  # (B*N, 1, 1, N_v) -> (B, N, N_v)
 
-            x_v = self.projection_verb(x)  # (B*N, 1, 1, F) -> (B*N, 1, 1, N_v)
-            x_v = self.fc_inference(x_v, self.act)
-            x_v = x_v.view(B, N, N_v)  # (B*N, 1, 1, N_v) -> (B, N, N_v)
+        x_n = self.projection_noun(x)  # (B*N, 1, 1, F) -> (B*N, 1, 1, N_n)
+        x_n = self.fc_inference(x_n, self.act)
+        x_n = x_n.view(B, N, N_n)  # (B*N, 1, 1, N_n) -> (B, N, N_n)
 
-            x_n = self.projection_noun(x)  # (B*N, 1, 1, F) -> (B*N, 1, 1, N_n)
-            x_n = self.fc_inference(x_n, self.act)
-            x_n = x_n.view(B, N, N_n)  # (B*N, 1, 1, N_n) -> (B, N, N_n)
+        x_n_mean = torch.zeros(B, N_n).to(x_n.device)
+        x_v_mean = torch.zeros(B, N_v).to(x_v.device)
+        for i, length in enumerate(lengths):
+            # First index is slected, hence dim=0 for 1st dimension
+            x_n_mean[i] = x_n[i, :length, :].mean(dim=0)
+            x_v_mean[i] = x_v[i, :length, :].mean(dim=0)
 
-            x_n_mean = torch.zeros(B, N_n).to(x_n.device)
-            x_v_mean = torch.zeros(B, N_v).to(x_v.device)
-            for i, length in enumerate(lengths):
-                # First index is slected, hence dim=0 for 1st dimension
-                x_n_mean[i] = x_n[i, :length, :].mean(dim=0)
-                x_v_mean[i] = x_v[i, :length, :].mean(dim=0)
+        x_n = x_n_mean
+        x_v = x_v_mean
 
-            x_n = x_n_mean
-            x_v = x_v_mean
+        assert x_n.shape == (B, N_n), f"x_n.shape must be {(B, N_n)} but was {x_n.shape}"
+        assert x_v.shape == (B, N_v), f"x_v.shape must be {(B, N_v)} but was {x_v.shape}"
 
-            assert x_n.shape == (B, N_n), f"x_n.shape must be {(B, N_n)} but was {x_n.shape}"
-            assert x_v.shape == (B, N_v), f"x_v.shape must be {(B, N_v)} but was {x_v.shape}"
+        logger.debug(f"Output verb: {x_v.shape if isinstance(x_v, torch.Tensor) else [i.shape for i in x_v]}")
 
-            if not self.only_action_recognition:
-                x_s = self.project_state(x)  # (B*N, 1, 1, F) -> (B*N, 1, 3, P)
-                x_s = self.fc_inference_state(x_s, self.state_act)  # (B*N, 1, 3, P) -> (B*N, 3, P)
-                x_s = x_s.view(B, N, N_p, 3)  # (B*N, 3, P) -> (B, N, P, 3)
+        logger.debug(f"Output noun: {x_n.shape if isinstance(x_n, torch.Tensor) else [i.shape for i in x_n]}")
 
-                return (x_v, x_n, x_s)
-
-            return (x_v, x_n)
-
-        else:
-            x = self.projection(x)
-            x = self.fc_inference(x, self.act)
-
-            return x
+        return (x_v, x_n)
 
     def fc_inference(self, x: torch.Tensor, act: nn.Module) -> torch.Tensor:
-        # Performs fully convolutional inference.
+        """
+        Perform fully convolutional inference.
+
+        Args:
+            x (tensor): input tensor.
+            act (nn.Module): activation function.
+
+        Returns:
+            tensor: output tensor.
+        """
         if not self.training:
             x = act(x)
-            x = x.mean([1, 2])
+            x = x.mean([1, 2, 3])
 
         x = x.view(x.shape[0], -1)
-        return x
-
-    def fc_inference_state(self, x: torch.Tensor, act: nn.Module) -> torch.Tensor:
-        # Performs fully convolutional inference.
-        # At the beginning, x has shape (B*N, 1, 3, P)
-        if not self.training:
-            x = act(x)  # (B*N, 1, 3, P) -> (B*N, 1, 3, P)
-
-        x = x.mean(1)  # (B*N, 1, 3, P) -> (B*N, 3, P)
 
         return x
 
@@ -243,56 +222,45 @@ class GRUResNetBasicHead(nn.Module):
            (B*N, 1, 1, 512) -> (B*N, 1, 1, n_features_asf)
         """
         # Reshape noun_embeddings to be (2 * num_gpu_layers, batch_size, embedding_size)
-        B, N = initial_batch_shape
+        B, L = initial_batch_shape
         F = x.shape[-1]
         D = 2 if self.gru.bidirectional else 1
 
-        # (B*N, 1, 1, n_features_asf) -> (B*N, n_features_asf)
-        # Squeeze all dimensions except the batch dimension (first)
-        x = x.squeeze(1).squeeze(1)
+        logger.warning(f"{B=}, {L=}, {F=}, {D=}")
 
-        # (B*N, n_features_asf) -> (B, N, n_features_asf)
-        x = x.view(B, N, F)
+        # (B*N, 1, 2, 2, n_features_sf) -> (B*N, 2, 2, n_features_sf)
+        logger.debug(f"Squeeze: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        x = x.squeeze(1)
+
+        # (B*N, 2, 2, n_features_sf) -> (B*N, 2*2*n_features_sf)
+        logger.debug(f"View 1: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        x = x.reshape(B * L, F)
+
+        # (B*N, 2*2n_features_sf) -> (B, N, 2*2*n_features_sf)
+        # (B*N, n_features_sf) -> (B, N, n_features_sf)
+        logger.debug(f"View 2: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        x = x.view(B, L, F)
+
+        logger.debug(f"Before pack padded sequence: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
 
         # Pass the transformed batch through the GRU
-        # (B, N, D * gru_hidden_size) = (B, N, 2 * 512)
+        # (B, L, 4*F) = (B, L, 2 * gru_hidden_size)
         x = torch.nn.utils.rnn.pack_padded_sequence(
             input=x,
             lengths=lengths,
             batch_first=True,
             enforce_sorted=False,
         )
-
-        if not self.only_action_recognition:
-            h_0 = (
-                noun_embeddings.unsqueeze(0).repeat(D * self.gru_num_layers, 1, 1)
-                if noun_embeddings is not None
-                else None
-            )
-
-            x, _ = self.gru(x, hx=h_0)
-        else:
-            x, _ = self.gru(x)
-
+        x, _ = self.gru(x)
         x, _ = torch.nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
 
+        logger.debug(f"After GRU: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         # (B, N, 1024) -> (B*N, 1024)
-        x = x.reshape(B * N, D * self.gru.hidden_size)
+        x = x.reshape(B * L, D * self.gru.hidden_size)
+        logger.debug(f"Reshape: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        x = x.unsqueeze(1)
+        logger.debug(f"After unsqueeze: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+
         x = x.unsqueeze(1).unsqueeze(1)
-
-        x = self.projection_to_dim_in(x)
-
-        return x
-
-    def project_state(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Project the GRU output to the state vector space.
-        """
-        x_min_1 = self.projection_min_1(x)  # (B, N, P)
-        x_0 = self.projection_0(x)  # (B, N, P)
-        x_1 = self.projection_1(x)  # (B, N, P)
-
-        # Concatenate them into a single tensor of size (B, N, 3, P)
-        x = torch.cat([x_min_1, x_0, x_1], dim=2)
 
         return x

@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-
-import logging
 import math
 import numpy as np
 import os
@@ -11,10 +9,8 @@ from fvcore.nn.flop_count import flop_count
 from matplotlib import pyplot as plt
 from torch import nn
 
-import slowfast.utils.logging as logging
 from slowfast.datasets.utils import pack_pathway_output
-
-logger = logging.get_logger(__name__)
+from loguru import logger
 
 
 def check_nan_losses(loss):

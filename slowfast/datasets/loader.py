@@ -4,7 +4,9 @@
 """Data loader."""
 
 import itertools
+from typing import Any, List
 import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data._utils.collate import default_collate
 from torch.utils.data.distributed import DistributedSampler
@@ -43,6 +45,45 @@ def detection_collate(batch):
             collated_extra_data[key] = default_collate(data)
 
     return inputs, labels, video_idx, collated_extra_data
+
+
+def epickitchens_collate(batch: List[Any]):
+    frames, labels, indices, metadata = zip(*batch)
+
+    slow_frames, fast_frames = zip(*frames)
+
+    lengths = [slow_frame.shape[0] for slow_frame in slow_frames]
+    padded_slow_frames = torch.nn.utils.rnn.pad_sequence(
+        slow_frames,
+        batch_first=True,
+        padding_value=0.0,
+    )
+    padded_fast_frames = torch.nn.utils.rnn.pad_sequence(
+        fast_frames,
+        batch_first=True,
+        padding_value=0.0,
+    )
+
+    padded_frames = (padded_slow_frames, padded_fast_frames)
+
+    indices = torch.tensor(indices)
+
+    grouped_labels = {
+        k: torch.stack(v, dim=0) if isinstance(v[0], torch.Tensor) else torch.tensor(v)
+        for k, v in pd.DataFrame(labels).to_dict("list").items()
+    }
+
+    metadata = pd.DataFrame(metadata).to_dict("list")
+
+    return_tuple = (
+        padded_frames,
+        lengths,
+        grouped_labels,
+        indices,
+        metadata,
+    )
+
+    return return_tuple
 
 
 def construct_loader(cfg, split):
@@ -84,7 +125,7 @@ def construct_loader(cfg, split):
         num_workers=cfg.DATA_LOADER.NUM_WORKERS,
         pin_memory=cfg.DATA_LOADER.PIN_MEMORY,
         drop_last=drop_last,
-        collate_fn=detection_collate if cfg.DETECTION.ENABLE else None,
+        collate_fn=epickitchens_collate if "GRU" in cfg.MODEL.MODEL_NAME else default_collate,
     )
     return loader
 
