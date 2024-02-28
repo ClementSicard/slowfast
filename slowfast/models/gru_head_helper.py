@@ -108,7 +108,7 @@ class GRUResNetBasicHead(nn.Module):
 
         "Projecting" here means that we are reducing the dimensionality of the input tensor to the number of classes.
         """
-        logger.debug(f"Input: {inputs.shape if isinstance(inputs, torch.Tensor) else [i.shape for i in inputs]}")
+        # logger.debug(f"Input: {inputs.shape if isinstance(inputs, torch.Tensor) else [i.shape for i in inputs]}")
 
         assert len(inputs) == self.num_pathways, "Input tensor does not contain {} pathway".format(self.num_pathways)
         pool_out = []
@@ -116,14 +116,14 @@ class GRUResNetBasicHead(nn.Module):
             m = getattr(self, "pathway{}_avgpool".format(pathway))
             pool_out.append(m(inputs[pathway]))
 
-        logger.debug(f"Cat: {pool_out.shape if isinstance(pool_out, torch.Tensor) else [i.shape for i in pool_out]}")
+        # logger.debug(f"Cat: {pool_out.shape if isinstance(pool_out, torch.Tensor) else [i.shape for i in pool_out]}")
         x = torch.cat(pool_out, 1)
 
         # (B*L, C, T, H, W) -> (B*L, T, H, W, C).
-        logger.debug(f"Permute: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        # logger.debug(f"Permute: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = x.permute((0, 2, 3, 4, 1))
 
-        logger.debug(f"After permute: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        # logger.debug(f"After permute: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
 
         """
         Starting from here, x has shape (B * N_s, 1, 1, n_features_asf)
@@ -133,14 +133,14 @@ class GRUResNetBasicHead(nn.Module):
         if hasattr(self, "dropout"):
             x = self.dropout(x)
 
-        logger.debug(f"Before GRU: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        # logger.debug(f"Before GRU: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = self._gru(
             x=x,
             noun_embeddings=noun_embeddings,
             initial_batch_shape=initial_batch_shape,
             lengths=lengths,
         )
-        logger.debug(f"After GRU: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        # logger.debug(f"After GRU: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
 
         # Recover B, N
         B, N = initial_batch_shape
@@ -167,9 +167,9 @@ class GRUResNetBasicHead(nn.Module):
         assert x_n.shape == (B, N_n), f"x_n.shape must be {(B, N_n)} but was {x_n.shape}"
         assert x_v.shape == (B, N_v), f"x_v.shape must be {(B, N_v)} but was {x_v.shape}"
 
-        logger.debug(f"Output verb: {x_v.shape if isinstance(x_v, torch.Tensor) else [i.shape for i in x_v]}")
+        # logger.debug(f"Output verb: {x_v.shape if isinstance(x_v, torch.Tensor) else [i.shape for i in x_v]}")
 
-        logger.debug(f"Output noun: {x_n.shape if isinstance(x_n, torch.Tensor) else [i.shape for i in x_n]}")
+        # logger.debug(f"Output noun: {x_n.shape if isinstance(x_n, torch.Tensor) else [i.shape for i in x_n]}")
 
         return (x_v, x_n)
 
@@ -226,22 +226,22 @@ class GRUResNetBasicHead(nn.Module):
         F = x.shape[-1]
         D = 2 if self.gru.bidirectional else 1
 
-        logger.warning(f"{B=}, {L=}, {F=}, {D=}")
+        # logger.warning(f"{B=}, {L=}, {F=}, {D=}")
 
         # (B*N, 1, 2, 2, n_features_sf) -> (B*N, 2, 2, n_features_sf)
-        logger.debug(f"Squeeze: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        # logger.debug(f"Squeeze: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = x.squeeze(1)
 
         # (B*N, 2, 2, n_features_sf) -> (B*N, 2*2*n_features_sf)
-        logger.debug(f"View 1: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        # logger.debug(f"View 1: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = x.reshape(B * L, F)
 
         # (B*N, 2*2n_features_sf) -> (B, N, 2*2*n_features_sf)
         # (B*N, n_features_sf) -> (B, N, n_features_sf)
-        logger.debug(f"View 2: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        # logger.debug(f"View 2: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = x.view(B, L, F)
 
-        logger.debug(f"Before pack padded sequence: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        # logger.debug(f"Before pack padded sequence: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
 
         # Pass the transformed batch through the GRU
         # (B, L, 4*F) = (B, L, 2 * gru_hidden_size)
@@ -254,12 +254,12 @@ class GRUResNetBasicHead(nn.Module):
         x, _ = self.gru(x)
         x, _ = torch.nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
 
-        logger.debug(f"After GRU: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        # logger.debug(f"After GRU: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         # (B, N, 1024) -> (B*N, 1024)
         x = x.reshape(B * L, D * self.gru.hidden_size)
-        logger.debug(f"Reshape: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        # logger.debug(f"Reshape: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
         x = x.unsqueeze(1)
-        logger.debug(f"After unsqueeze: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
+        # logger.debug(f"After unsqueeze: {x.shape if isinstance(x, torch.Tensor) else [i.shape for i in x]}")
 
         x = x.unsqueeze(1).unsqueeze(1)
 

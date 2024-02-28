@@ -56,7 +56,7 @@ def train_epoch_gru(train_loader, model, optimizer, train_meter, cur_epoch, cfg)
             unit="batch",
         ),
     ):
-        inputs, lengths, labels, video_idx, meta = batch
+        inputs, lengths, labels, video_idx, _ = batch
 
         # Transfer the data to the current GPU device.
         if cfg.NUM_GPUS > 0:
@@ -69,15 +69,20 @@ def train_epoch_gru(train_loader, model, optimizer, train_meter, cur_epoch, cfg)
             labels = {k: v.cuda() for k, v in labels.items()}
             video_idx = video_idx.cuda()
 
+        logger.error("prout")
+
         # Update the learning rate.
         lr = optim.get_epoch_lr(cur_epoch + float(cur_iter) / data_size, cfg)
         optim.set_lr(optimizer, lr)
+        logger.error("prout2")
 
         # Perform the forward pass.
         preds = model(inputs, lengths=lengths)
+        logger.error("prout2")
 
         # Explicitly declare reduction to mean.
         loss_fun = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)(reduction="mean")
+        logger.error("prout3")
 
         # Compute the loss.
         loss_verb = loss_fun(preds[0], labels["verb"])
@@ -92,6 +97,7 @@ def train_epoch_gru(train_loader, model, optimizer, train_meter, cur_epoch, cfg)
         loss.backward()
         # Update the parameters.
         optimizer.step()
+        logger.error("prout4")
 
         # Compute the verb accuracies.
         verb_top1_acc, verb_top5_acc = metrics.topk_accuracies(preds[0], labels["verb"], (1, 5))

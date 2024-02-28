@@ -139,8 +139,6 @@ def perform_test(test_loader, model, test_meter, cfg):
         # Perform the forward pass.
         preds = model(inputs)
 
-        exit(0)
-
         # Gather all the predictions across all the devices to perform ensemble.
         if cfg.NUM_GPUS > 1:
             verb_preds, verb_labels, video_idx = du.all_gather([preds[0], labels["verb"], video_idx])
